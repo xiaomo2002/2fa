@@ -1,7 +1,11 @@
 name = "2fa"
 main = "src/worker.js"
 compatibility_date = "2024-01-13"
-workers_dev = true
+workers_dev = false
+
+[[routes]]
+pattern = "2fa.admin1.top"
+custom_domain = true
 
 # KV 命名空间
 # 始终声明 SECRETS_KV，避免 Git 自动构建部署时丢失绑定。
@@ -9,6 +13,7 @@ workers_dev = true
 # 如需固定到指定资源，可在本地补充 id / preview_id。
 [[kv_namespaces]]
 binding = "SECRETS_KV"
+id = "9c132da9c8034ffba0f6ece9aaf5c76c"
 
 # 环境变量 (Secrets)
 # 注意：敏感信息使用 Cloudflare Secrets 安全存储
