@@ -1,6 +1,10 @@
 name: Sync Upstream
 
 on:
+  schedule:
+    # Daily 03:20 Beijing time (19:20 UTC)
+    - cron: '20 19 * * *'
+
   workflow_dispatch:
     inputs:
       upstream_ref:
@@ -20,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       UPSTREAM_REPO: wuzf/2fa
-      UPSTREAM_REF: ${{ inputs.upstream_ref }}
+      UPSTREAM_REF: ${{ github.event.inputs.upstream_ref || 'main' }}
 
     steps:
       - name: Checkout current repository
