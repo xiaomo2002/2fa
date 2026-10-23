@@ -5,7 +5,14 @@
 import { buildDownloadContent, normalizeBackupSecrets } from '../../utils/backup-format.js';
 import { getLogger } from '../../utils/logger.js';
 import { createErrorResponse } from '../../utils/response.js';
-import { checkRateLimit, createRateLimitResponse, getClientIdentifier, RATE_LIMIT_PRESETS } from '../../utils/rateLimit.js';
+import { getRequestLanguage, normalizeLanguage } from '../../utils/i18n.js';
+import {
+	checkRateLimit,
+	scopedRateLimitKey,
+	createRateLimitResponse,
+	getClientIdentifier,
+	RATE_LIMIT_PRESETS,
+} from '../../utils/rateLimit.js';
 
 const EXPORT_FORMATS = ['txt', 'json', 'csv', 'html'];
 export const MAX_EXPORT_REQUEST_BYTES = 2 * 1024 * 1024;
@@ -136,7 +143,11 @@ export async function handleExportSecrets(request, env) {
 
 	try {
 		const clientIP = getClientIdentifier(request, 'ip');
-		const rateLimitInfo = await checkRateLimit(`${EXPORT_RATE_LIMIT_KEY_PREFIX}:${clientIP}`, env, RATE_LIMIT_PRESETS.sensitive);
+		const rateLimitInfo = await checkRateLimit(
+			scopedRateLimitKey(EXPORT_RATE_LIMIT_KEY_PREFIX, clientIP),
+			env,
+			RATE_LIMIT_PRESETS.sensitive,
+		);
 
 		if (!rateLimitInfo.allowed) {
 			logger.warn('批量导出操作速率限制超出', {
@@ -192,6 +203,7 @@ export async function handleExportSecrets(request, env) {
 		}
 
 		const timestamp = new Date().toISOString();
+		const language = body?.language === undefined ? getRequestLanguage(request) : normalizeLanguage(body.language) || 'en';
 		const secrets = normalizeBackupSecrets(body.secrets, timestamp, {
 			strict: true,
 		});
@@ -201,6 +213,7 @@ export async function handleExportSecrets(request, env) {
 			reason: 'export',
 			filenamePrefix: body?.filenamePrefix,
 			metadata: body?.metadata,
+			language,
 		});
 
 		logger.info('批量导出成功', {
@@ -215,10 +228,11 @@ export async function handleExportSecrets(request, env) {
 			status: 200,
 			headers: {
 				'Content-Type': download.contentType,
+				'Content-Language': language,
 				'Content-Disposition': `attachment; filename="${download.filename}"`,
 				'Access-Control-Allow-Origin': '*',
 				'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-				'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+				'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Language',
 			},
 		});
 	} catch (error) {

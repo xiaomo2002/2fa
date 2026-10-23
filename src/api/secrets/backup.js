@@ -4,8 +4,15 @@
 
 import { getAllSecrets } from './shared.js';
 import { getLogger } from '../../utils/logger.js';
-import { checkRateLimit, getClientIdentifier, createRateLimitResponse, RATE_LIMIT_PRESETS } from '../../utils/rateLimit.js';
+import {
+	checkRateLimit,
+	scopedRateLimitKey,
+	getClientIdentifier,
+	createRateLimitResponse,
+	RATE_LIMIT_PRESETS,
+} from '../../utils/rateLimit.js';
 import { createJsonResponse, createErrorResponse } from '../../utils/response.js';
+import { getRequestLanguage } from '../../utils/i18n.js';
 import { ValidationError, StorageError, CryptoError, BusinessLogicError, errorToResponse, logError } from '../../utils/errors.js';
 import { resolveConfiguredBackupFormat } from '../../utils/backup.js';
 import { pushToWebDAV } from '../../utils/webdav.js';
@@ -41,7 +48,7 @@ export async function handleBackupSecrets(request, env, ctx) {
 
 	try {
 		const clientIP = getClientIdentifier(request, 'ip');
-		const rateLimitInfo = await checkRateLimit(clientIP, env, RATE_LIMIT_PRESETS.sensitive);
+		const rateLimitInfo = await checkRateLimit(scopedRateLimitKey('backup', clientIP), env, RATE_LIMIT_PRESETS.sensitive);
 
 		if (!rateLimitInfo.allowed) {
 			logger.warn('备份操作速率限制超出', {
@@ -49,7 +56,7 @@ export async function handleBackupSecrets(request, env, ctx) {
 				limit: rateLimitInfo.limit,
 				resetAt: rateLimitInfo.resetAt,
 			});
-			return createRateLimitResponse(rateLimitInfo);
+			return createRateLimitResponse(rateLimitInfo, request);
 		}
 
 		logger.info('开始执行手动备份任务', {
@@ -62,6 +69,7 @@ export async function handleBackupSecrets(request, env, ctx) {
 		if (secrets && secrets.length > 0) {
 			const backupFormat = await resolveConfiguredBackupFormat(env, logger);
 			const backupEntry = await createBackupEntry(secrets, env, {
+				language: getRequestLanguage(request),
 				format: backupFormat,
 				reason: 'manual',
 				strict: true,
@@ -132,15 +140,19 @@ export async function handleBackupSecrets(request, env, ctx) {
 				skippedInvalidCount: backupEntry.skippedInvalidCount,
 			});
 
-			return createJsonResponse({
-				success: true,
-				message: `备份完成，共备份 ${storedCount} 个密钥`,
-				backupKey,
-				count: storedCount,
-				timestamp,
-				encrypted: isEncrypted,
-				format: storedFormat,
-			});
+			return createJsonResponse(
+				{
+					success: true,
+					message: `备份完成，共备份 ${storedCount} 个密钥`,
+					backupKey,
+					count: storedCount,
+					timestamp,
+					encrypted: isEncrypted,
+					format: storedFormat,
+				},
+				200,
+				request,
+			);
 		}
 
 		throw new BusinessLogicError('没有密钥需要备份', {
@@ -154,7 +166,7 @@ export async function handleBackupSecrets(request, env, ctx) {
 
 		if (error instanceof BusinessLogicError || error instanceof StorageError || error instanceof CryptoError) {
 			logError(error, logger, { operation: 'handleBackupSecrets' });
-			return errorToResponse(error);
+			return errorToResponse(error, request);
 		}
 
 		logger.error(
@@ -164,7 +176,7 @@ export async function handleBackupSecrets(request, env, ctx) {
 			},
 			error,
 		);
-		return createErrorResponse('备份失败', `备份过程中发生错误：${error.message}`, 500);
+		return createErrorResponse('备份失败', `备份过程中发生错误：${error.message}`, 500, request);
 	}
 }
 

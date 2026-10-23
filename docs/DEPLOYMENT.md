@@ -1,880 +1,130 @@
 # 🚀 部署指南
 
-本文档提供三种部署方式，请根据您的技术背景选择：
+本文档提供两种部署方式：
 
-- **[一键部署指南](#一键部署指南)** - 最快捷但需要后续配置
-- **[非开发者部署指南](#非开发者部署指南)** - 零基础图文教程，详细到每一步
-- **[开发者部署指南](#开发者部署指南)** - 快速命令行部署，5分钟完成
-
----
-
-## 🚀 一键部署指南
-
-**适合人群**：想要快速体验 Cloudflare Workers 部署，愿意后续手动配置
-
-**部署时间**：2-3 分钟部署 + 5-10 分钟配置
-
-**优点**：
-
-- ✅ 点击按钮即可部署
-- ✅ 无需安装 Node.js 和命令行工具
-- ✅ 自动创建 Worker
-
-**缺点**：
-
-- ⚠️ KV Namespace 需要手动配置
-- ⚠️ 加密密钥需要手动设置
-- ⚠️ 需要了解 Cloudflare Dashboard 操作
+- **[一键部署](#一键部署)** — 点击按钮即可完成，适合大多数用户
+- **[命令行部署](#命令行部署)** — 适合开发者或需要自定义配置的用户
 
 ---
 
-### 第 1 步：点击一键部署
+## 一键部署
+
+**部署时间**：约 5 分钟
+
+### 第 1 步：部署 Worker
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wuzf/2fa)
 
-1. 点击上面的部署按钮
-2. 如果未登录 Cloudflare，会提示登录
-3. 授权 GitHub 访问（首次使用需要）
-4. 选择仓库和分支
-5. 点击 "Deploy" 按钮
+1. 点击上方部署按钮，使用 GitHub 登录并授权
+2. 登录 Cloudflare 账户，点击 **Deploy** 等待部署完成
+3. 记下您的 Worker URL（如 `https://2fa-xxxx.workers.dev`）
 
-**会发生什么**：
+> 项目 `wrangler.toml` 已显式声明 `SECRETS_KV` 和 Durable Object `SECRETS_STORE`，Wrangler 会在首次部署时自动创建它们并在后续部署中复用，无需手动创建。
+> 部署页面的 **Name your KV namespace** 会另外新建一个 KV（默认名为 `2fa`），但它不会被使用：首次部署时 Wrangler 创建并绑定的是 `<Worker 名>-secrets-kv`，账户数据都保存在那里。前者始终为空，可以在 **Workers KV** 页面删除；删除前先在 Worker 的 **设置 → 绑定** 中确认 `SECRETS_KV` 指向的不是它。
+> 如果您在 Cloudflare Dashboard 中手动配置 Git 构建命令，**部署命令请使用 `npm run deploy`，不要直接写 `npx wrangler deploy`**，以保留项目的版本注入流程。
+> 在 Workers Builds 中构建时，`npm run deploy` 按 Cloudflare 提供的实际 Worker 名称（环境变量 `WRANGLER_CI_OVERRIDE_NAME`）查找已有 KV。即使 Dashboard 中的 Worker 名与 `wrangler.toml` 的 `name` 不同，也不会绑定到同一账户里按配置名创建的其他部署的 KV。
 
-- Worker 会被自动创建和部署
-- 代码会从 GitHub 仓库拉取
-- 显示部署成功的 URL
+### 第 2 步：（强烈推荐）配置加密密钥
 
-📝 **记下您的 Worker URL**（如 `https://2fa-xxxx.workers.dev`）
+配置 `ENCRYPTION_KEY` 后，密钥数据将使用 AES-GCM 256 位加密存储。
 
-⚠️ **此时访问 URL 会显示错误**，因为还需要配置 KV Namespace。
+1. 生成加密密钥（任选一种方式）：
 
----
+   ```bash
+   openssl rand -base64 32
+   # 或
+   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+   ```
 
-### 第 2 步：创建 KV Namespace
-
-1. **访问 Cloudflare Dashboard**：
-   - 登录 [Cloudflare Dashboard](https://dash.cloudflare.com)
-   - 点击左侧菜单 **Workers & Pages**
-   - 点击 **KV**
-
-2. **创建 KV Namespace**：
-   - 点击 **Create a namespace** 按钮
-   - 输入名称：`2fa-secrets`（可以自定义）
-   - 点击 **Add**
-
-3. **记下 Namespace ID**：
-   - 创建成功后，记下显示的 **ID**（类似 `a98735f310c24a9786cfd388241258e7`）
-
-📝 **保存这个 ID**，下一步需要用到。
-
----
-
-### 第 3 步：绑定 KV Namespace 到 Worker
-
-1. **打开 Worker 设置**：
-   - 在 Cloudflare Dashboard 中
-   - 转到 **Workers & Pages**
-   - 找到并点击您的 Worker（名称为 `2fa`）
-
-2. **添加 KV 绑定**：
-   - 点击 **Settings** 标签
-   - 滚动到 **Variables and Secrets** 部分
-   - 点击 **KV Namespace Bindings** 旁的 **Add binding**
-
-3. **配置绑定**：
-   - **Variable name**: 输入 `SECRETS_KV`（必须完全一致）
-   - **KV namespace**: 选择刚才创建的 `2fa-secrets`
-   - 点击 **Save**
-
-4. **重新部署**：
-   - 点击 **Deployments** 标签
-   - 点击最新部署右侧的 **...** 菜单
-   - 选择 **Retry deployment**
-
-✅ **完成标志**：重新部署成功，没有错误提示
-
-> 说明：如果后续改为使用 Git 自动构建，Cloudflare 会直接读取仓库中的 `wrangler.toml` 进行部署。当前项目配置已显式声明 `SECRETS_KV`，Wrangler 会在首次部署时自动创建所需 KV，并在后续部署中继续复用当前 Worker 已绑定的资源。
-> 如果你在 Cloudflare Dashboard 中手动填写 Git 构建命令，**部署命令请使用 `npm run deploy`，不要直接写 `npx wrangler deploy`**，这样会保留项目里的版本注入流程，并和仓库默认部署入口保持一致。
-
----
-
-### 第 4 步：（强烈推荐）配置加密密钥
-
-**为什么要配置**？
-
-- 保护您的 2FA 密钥数据
-- AES-GCM 256 位加密
-- 防止数据泄露
-
-1. **生成加密密钥**：
-
-   **方法 1：在线生成（推荐）**
-   - 访问：https://generate-secret.vercel.app/32
-   - 复制生成的 Base64 字符串
-
-   **方法 2：使用浏览器控制台**
-   - 按 `F12` 打开浏览器控制台
-   - 粘贴以下代码并回车：
+   没有命令行环境时，也可以按 `F12` 在浏览器控制台运行：
 
    ```javascript
-   crypto
-   	.getRandomValues(new Uint8Array(32))
-   	.reduce((s, b) => s + String.fromCharCode(b), '')
-   	.split('')
-   	.map((c) => btoa(c))
-   	.join('')
-   	.slice(0, 44);
+   btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
    ```
 
-   - 复制输出的字符串
-
-2. **在 Worker 中添加 Secret**：
-   - 在 Worker 的 **Settings** 页面
-   - 滚动到 **Environment Variables** 部分
-   - 点击 **Add variable**
-   - **Type**: 选择 **Secret**
-   - **Variable name**: 输入 `ENCRYPTION_KEY`
-   - **Value**: 粘贴刚才生成的加密密钥
+2. 在 Cloudflare Dashboard 中打开您的 Worker → **Settings** → **Variables and Secrets** → **Add**：
+   - **Type**: `Secret`
+   - **Variable name**: `ENCRYPTION_KEY`
+   - **Value**: 粘贴刚才生成的密钥
    - 点击 **Save and deploy**
 
-⚠️ **重要**：将加密密钥保存到密码管理器，丢失后数据无法解密！
+⚠️ **重要**：`ENCRYPTION_KEY` 是解密数据的唯一主密钥，Cloudflare 保存后不会再次显示原值。请立即将其保存到密码管理器或其他安全位置——**丢失后已加密的数据将无法恢复**。如果无法确保保存原值，宁可暂时不设置。
 
-✅ **完成标志**：看到 "Successfully saved" 提示
+### 第 3 步：设置管理密码
 
----
+访问您的 Worker URL，首次访问会自动跳转到 `/setup` 设置页面：
 
-### 第 5 步：首次访问设置密码
+1. 设置管理密码（至少 8 位，需包含大写字母、小写字母、数字和特殊字符）
+2. 确认密码后点击"完成设置"，自动登录进入主页
 
-1. **访问您的 Worker URL**：
-   - 在浏览器中打开记下的 URL
-   - 例如：`https://2fa-xxxx.workers.dev`
-
-2. **自动跳转到设置页面**：
-   - 首次访问会自动跳转到 `/setup` 页面
-   - 看到 "欢迎使用 2FA" 的设置界面
-
-3. **设置管理密码**：
-   - 输入密码（至少 8 位，包含大小写字母、数字、特殊字符）
-   - 确认密码
-   - 点击 "完成设置"
-
-4. **自动登录**：
-   - 设置成功后自动登录
-   - 跳转到主页面
-   - 可以开始添加 2FA 密钥
-
-✅ **恭喜！一键部署完成！**
+✅ 部署完成，可以开始添加 2FA 密钥了。
 
 ---
 
-### 一键部署常见问题
+## 命令行部署
 
-**Q1: 点击部署按钮后显示 "Repository not found"**
+**适合人群**：熟悉命令行，本机已安装 [Node.js](https://nodejs.org/)（LTS 版本）和 [Git](https://git-scm.com/)
 
-**原因**：GitHub 仓库权限问题
-
-**解决**：
-
-- 确认已登录 GitHub
-- 授权 Cloudflare Workers 访问 GitHub
-- 重试部署
-
----
-
-**Q2: 部署成功但访问显示 "Error 1101"**
-
-**原因**：KV Namespace 未正确绑定
-
-**解决**：
-
-- 检查 KV Namespace 是否已创建
-- 检查 Variable name 是否为 `SECRETS_KV`（区分大小写）
-- 重新部署 Worker
-
----
-
-**Q3: 访问页面显示 "服务未配置"**
-
-**原因**：KV 绑定不正确
-
-**解决**：
-
-1. 在 Worker Settings 中检查 KV Namespace Bindings
-2. 确认 Variable name 完全一致：`SECRETS_KV`
-3. 重新部署
-
----
-
-**Q4: 忘记保存加密密钥怎么办？**
-
-**解决**：
-
-- 如果还没有添加数据，可以重新生成并设置新的密钥
-- 如果已有数据，旧数据无法解密（建议重新导入）
-- 未来添加的数据将使用新密钥加密
-
----
-
-### 一键部署 vs 命令行部署
-
-| 特性         | 一键部署               | 命令行部署                |
-| ------------ | ---------------------- | ------------------------- |
-| **部署速度** | ⚡ 快（2-3分钟）       | 中等（5-10分钟）          |
-| **技术要求** | 低（仅需浏览器）       | 中等（需要命令行）        |
-| **后续配置** | ⚠️ 较多（手动配置 KV） | ✅ 较少（自动化脚本）     |
-| **加密设置** | 手动（Dashboard）      | 命令行（wrangler secret） |
-| **适合人群** | 快速体验用户           | 开发者和高级用户          |
-
-**推荐**：
-
-- 如果只是想快速体验 → 使用一键部署
-- 如果要长期使用或了解技术细节 → 使用命令行部署
-
----
-
-## 📖 非开发者部署指南
-
-**适合人群**：第一次使用命令行，没有编程经验
-
-**部署时间**：15-20 分钟
-
-**所需工具**：
-
-- 一台电脑（Windows/Mac/Linux 都可以）
-- 浏览器（Chrome/Firefox/Safari/Edge）
-- 稳定的网络连接
-
----
-
-### 准备工作
-
-#### 第 1 步：注册 Cloudflare 账户
-
-1. 访问 [Cloudflare 注册页面](https://dash.cloudflare.com/sign-up)
-2. 输入您的邮箱和密码
-3. 点击"Create Account"
-4. 到邮箱查收验证邮件，点击验证链接
-5. 完成注册
-
-✅ **完成标志**：能够登录 [Cloudflare Dashboard](https://dash.cloudflare.com)
-
----
-
-#### 第 2 步：安装 Node.js
-
-**什么是 Node.js**？它是运行部署工具的必需软件，就像安装其他普通软件一样。
-
-**Windows 系统**：
-
-1. 访问 [Node.js 官网](https://nodejs.org/)
-2. 点击绿色的"LTS"版本下载按钮（推荐版本，如 v20.x.x）
-3. 下载完成后，双击安装包
-4. 安装过程中一路点击"Next"（保持默认选项即可）
-5. 安装完成后，点击"Finish"
-
-**Mac 系统**：
-
-1. 访问 [Node.js 官网](https://nodejs.org/)
-2. 点击绿色的"LTS"版本下载按钮
-3. 下载完成后，双击 `.pkg` 文件
-4. 安装过程中一路点击"继续"（保持默认选项即可）
-5. 输入系统密码完成安装
-
-**验证安装**：
-
-打开命令行工具：
-
-- **Windows**：按 `Win + R`，输入 `cmd`，按回车
-- **Mac**：按 `Cmd + Space`，输入 `Terminal`，按回车
-
-在命令行中输入以下命令（输入后按回车）：
-
-```bash
-node --version
-```
-
-如果显示类似 `v20.11.0` 的版本号，说明安装成功。
-
-✅ **完成标志**：能看到 Node.js 版本号
-
----
-
-#### 第 3 步：下载项目代码
-
-**方法 1：使用 Git（推荐）**
-
-如果您已安装 Git：
-
-1. 打开命令行工具
-2. 进入您想保存项目的文件夹，例如：
-
-   ```bash
-   # Windows
-   cd C:\Users\你的用户名\Documents
-
-   # Mac
-   cd ~/Documents
-   ```
-
-3. 克隆项目：
-
-   ```bash
-   git clone https://github.com/wuzf/2fa.git
-   ```
-
-4. 进入项目目录：
-   ```bash
-   cd 2fa
-   ```
-
-**方法 2：直接下载 ZIP（无需 Git）**
-
-1. 访问 [项目页面](https://github.com/wuzf/2fa)
-2. 点击绿色的"Code"按钮
-3. 点击"Download ZIP"
-4. 下载完成后，解压到任意文件夹
-5. 打开命令行，进入解压后的文件夹：
-   ```bash
-   # 例如解压到桌面
-   cd Desktop/2fa-main
-   ```
-
-✅ **完成标志**：命令行显示的路径包含 `2fa` 文件夹
-
----
-
-### 开始部署
-
-#### 第 4 步：安装项目依赖
-
-在命令行中，确保您在 `2fa` 项目文件夹内，然后输入：
-
-```bash
-npm install
-```
-
-**会发生什么**：
-
-- 命令行会显示很多下载信息
-- 大约需要 1-3 分钟（取决于网速）
-- 最后显示"added XXX packages"表示成功
-
-**如果出现错误**：
-
-- 检查网络连接是否正常
-- 尝试切换到手机热点
-- 如果还是失败，尝试运行：`npm install --registry=https://registry.npmmirror.com`
-
-✅ **完成标志**：命令行回到输入提示符，没有红色错误信息
-
----
-
-#### 第 5 步：登录 Cloudflare
-
-在命令行中输入：
-
-```bash
-npx wrangler login
-```
-
-**会发生什么**：
-
-1. 浏览器会自动打开一个 Cloudflare 授权页面
-2. 如果您已登录 Cloudflare，直接点击"Allow"（允许）
-3. 如果未登录，先登录后再点击"Allow"
-4. 看到"Success"页面后，可以关闭浏览器
-5. 命令行显示"Successfully logged in"
-
-**常见问题**：
-
-**Q: 浏览器没有自动打开怎么办？**
-
-- 命令行会显示一个链接（以 `https://` 开头）
-- 复制这个链接，手动粘贴到浏览器打开
-
-**Q: 点击 Allow 后没反应？**
-
-- 等待 10 秒左右
-- 检查是否有弹窗被浏览器拦截
-- 刷新页面重试
-
-✅ **完成标志**：命令行显示"Successfully logged in"
-
----
-
-#### 第 6 步：创建存储空间（KV）
-
-**什么是 KV**？它是 Cloudflare 提供的数据存储服务，用来保存您的 2FA 密钥。
-
-**创建生产环境 KV**：
-
-在命令行中输入：
-
-```bash
-npx wrangler kv:namespace create SECRETS_KV
-```
-
-命令行会输出类似以下内容（**重要！需要保存**）：
-
-```
-✨ Success!
-Add the following to your wrangler.toml:
-
-[[kv_namespaces]]
-binding = "SECRETS_KV"
-id = "a98735f310c24a9786cfd388241258e7"
-```
-
-📝 **请记下 `id` 后面的这串字符**（每个人都不一样）
-
-**创建预览环境 KV**：
-
-继续输入：
-
-```bash
-npx wrangler kv:namespace create SECRETS_KV --preview
-```
-
-输出类似：
-
-```
-✨ Success!
-preview_id = "b60723194832445f8f3abc1b69fb693c"
-```
-
-📝 **请记下 `preview_id` 后面的这串字符**
-
-✅ **完成标志**：获得两个 ID（`id` 和 `preview_id`）
-
----
-
-#### 第 7 步：修改配置文件
-
-1. **打开配置文件**：
-   - 在项目文件夹中找到 `wrangler.toml` 文件
-   - 用记事本（Windows）或文本编辑（Mac）打开
-
-2. **找到这几行**：
-
-   ```toml
-   [[kv_namespaces]]
-   binding = "SECRETS_KV"
-   id = "a98735f310c24a9786cfd388241258e7"
-   preview_id = "b60723194832445f8f3abc1b69fb693c"
-   ```
-
-3. **替换 ID**：
-   - 将 `id = "..."` 中的内容替换为第 6 步记下的 `id`
-   - 将 `preview_id = "..."` 中的内容替换为第 6 步记下的 `preview_id`
-
-4. **保存文件**：
-   - Windows：按 `Ctrl + S`
-   - Mac：按 `Cmd + S`
-   - 关闭文本编辑器
-
-✅ **完成标志**：文件已保存，ID 已更新
-
----
-
-#### 第 8 步：（可选但强烈推荐）配置加密
-
-**为什么要配置加密**？
-
-- 保护您的 2FA 密钥数据
-- 即使有人获得 Cloudflare 访问权限，也无法读取数据
-- **强烈建议配置**
-
-**生成加密密钥**：
-
-在命令行中输入：
-
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-```
-
-会输出一串随机字符，例如：
-
-```
-dGhpc2lzYXNlY3VyZXJhbmRvbXRva2VuMTIzNDU2Nzg5MA==
-```
-
-📝 **将这串字符复制并保存到安全的地方**（如密码管理器）
-
-⚠️ **重要警告**：
-
-- 这是您唯一的加密密钥
-- 丢失后数据将无法解密
-- 请务必备份到安全位置
-
-**设置加密密钥**：
-
-在命令行中输入：
-
-```bash
-npx wrangler secret put ENCRYPTION_KEY
-```
-
-提示"Enter a secret value:"时，粘贴刚才生成的密钥，按回车。
-
-**不会显示任何字符，这是正常的**（密码输入模式）。
-
-✅ **完成标志**：命令行显示"Success! Uploaded secret ENCRYPTION_KEY"
-
----
-
-#### 第 9 步：部署到 Cloudflare
-
-终于到最后一步了！在命令行中输入：
-
-```bash
-npm run deploy
-```
-
-**会发生什么**：
-
-1. 项目会被打包和上传（大约 10-30 秒）
-2. 显示上传进度和大小
-3. 最后显示部署的 URL
-
-**输出示例**：
-
-```
-✨ Total Upload: 518.76 KiB / gzip: 102.84 KiB
-✨ Deployed 2fa triggers (1.80 sec)
-   https://2fa-abc123.workers.dev
-   schedule: 0 16 * * *
-Current Version ID: 63b40cd3-91de-421b-bd97-f556cc27fa83
-```
-
-📝 **记下您的 Worker URL**（如 `https://2fa-abc123.workers.dev`）
-
-✅ **完成标志**：看到"Deployed"和您的专属 URL
-
----
-
-#### 第 10 步：首次设置密码
-
-1. **访问您的 URL**：
-   - 在浏览器中打开刚才记下的 URL
-   - 例如：`https://2fa-abc123.workers.dev`
-
-2. **自动跳转到设置页面**：
-   - 首次访问会自动跳转到 `/setup` 页面
-   - 看到"欢迎使用 2FA"的设置界面
-
-3. **设置管理密码**：
-
-   **密码要求**（必须全部满足）：
-   - ✅ 至少 8 个字符
-   - ✅ 包含大写字母（A-Z）
-   - ✅ 包含小写字母（a-z）
-   - ✅ 包含数字（0-9）
-   - ✅ 包含特殊字符（如 `!@#$%^&*`）
-
-   **示例密码**：
-   - `MySecure2FA@2025`
-   - `Strong!Pass123`
-   - `CloudFlare#2FA`
-
-4. **确认密码**：
-   - 在第二个输入框中再次输入相同的密码
-
-5. **点击"完成设置"**：
-   - 等待几秒
-   - 自动登录并跳转到主页
-
-✅ **恭喜！部署成功！**
-
----
-
-### 使用您的 2FA 管理器
-
-现在您可以：
-
-1. **添加 2FA 密钥**：
-   - 点击右下角的 ➕ 按钮
-   - 选择"扫二维码"或"手动添加"
-
-2. **管理密钥**：
-   - 查看验证码
-   - 复制验证码
-   - 编辑或删除密钥
-
-3. **批量导入**：
-   - 从其他 2FA 应用导入密钥
-
-4. **定期备份**：
-   - 点击"批量导出"保存备份
-
----
-
-### 常见问题
-
-**Q1: 忘记管理密码怎么办？**
-
-**解决方法**：
-
-1. 打开命令行，进入项目文件夹
-2. 运行以下命令（替换为您的 KV ID）：
-   ```bash
-   npx wrangler kv:key delete "user_password" --namespace-id=your-kv-id
-   ```
-3. 重新访问 URL，会自动跳转到设置页面
-4. 设置新密码
-
-**如何找到 KV ID**？
-
-- 打开 `wrangler.toml` 文件
-- 找到 `id = "......"` 这一行
-- 引号内的字符串就是您的 KV ID
-
-**Q2: 部署后访问显示错误怎么办？**
-
-**检查清单**：
-
-1. 确认部署成功（看到"Deployed"字样）
-2. 等待 1-2 分钟（DNS 传播需要时间）
-3. 刷新浏览器页面（按 `Ctrl + F5` 或 `Cmd + Shift + R`）
-4. 检查 `wrangler.toml` 中的 KV ID 是否正确
-
-**Q3: 提示"服务未配置"怎么办？**
-
-**原因**：KV 存储未正确配置
-
-**解决方法**：
-
-1. 检查 `wrangler.toml` 中的 `id` 是否正确
-2. 重新运行 `npm run deploy`
-3. 清除浏览器缓存后重试
-
-**Q4: 如何更新到最新版本？**
-
-如果你是 **一键部署** 用户，统一使用 GitHub 仓库中的 **Sync Upstream** 工作流原地升级。无论有没有设置 `ENCRYPTION_KEY`，都是同一套流程：
-
-一键部署创建的仓库不包含 `.github/workflows/` 目录。如果你的仓库里还没有 **Actions → Sync Upstream**，先在自己的仓库中新增文件 `.github/workflows/sync-upstream.yml`，内容复制自上游仓库文件：<https://github.com/wuzf/2fa/blob/main/.github/workflows/sync-upstream.yml>，并提交一次；之后再按下面步骤升级。
-
-1. 打开一键部署生成的 GitHub 仓库
-2. 进入 **Actions** → **Sync Upstream**
-3. 点击 **Run workflow**
-4. 等待工作流提交最新代码
-5. 工作流会自动以最新上游配置为基础，合并你当前仓库里的 Worker 名称、KV 绑定和常见部署配置
-6. Cloudflare 会自动重新部署同一个 Worker
-
-这种方式不会删除原 Worker、KV 绑定或 Secrets，已经配置好的 `ENCRYPTION_KEY` 会继续生效；没有配置 `ENCRYPTION_KEY` 的用户也照样用这套流程升级。
-
-⚠️ **重要**：
-
-- `ENCRYPTION_KEY` 是解密已有数据的主密钥，请在首次创建时保存到密码管理器
-- Cloudflare Secret 保存后不会再次显示原值
-- 正常升级不要删除 Worker、GitHub 仓库或 KV 命名空间
-- 如果 Cloudflare 没有自动部署，就在当前 Worker 的 **Deployments** 页面重新部署最新提交，而不是删除后重装
-
-如果你是 **本地 clone + wrangler deploy** 用户，按下面命令升级：
-
-```bash
-# 1. 在项目文件夹中打开命令行
-cd path/to/2fa
-
-# 2. 拉取最新代码
-git pull origin main
-
-# 3. 更新依赖
-npm install
-
-# 4. 重新部署
-npm run deploy
-```
-
-**Q5: 如何更换电脑继续管理？**
-
-您的数据存储在 Cloudflare，不在本地电脑：
-
-1. 在新电脑上重复第 1-5 步（不需要重新创建 KV）
-2. 使用原来的 `wrangler.toml` 配置
-3. 重新部署即可（数据不会丢失）
-
----
-
-### 获取帮助
-
-如果遇到问题：
-
-1. **查看详细错误信息**：
-   - 命令行显示的红色文字
-   - 浏览器控制台（按 `F12` 打开）
-
-2. **搜索已知问题**：
-   - 查看 [GitHub Issues](https://github.com/wuzf/2fa/issues)
-   - 搜索错误关键词
-
-3. **提交问题**：
-   - [创建新 Issue](https://github.com/wuzf/2fa/issues/new)
-   - 描述问题和错误信息
-   - 附上命令行输出截图
-
----
-
-## ⚡ 开发者部署指南
-
-**适合人群**：熟悉命令行，有基本开发经验
-
-**部署时间**：5 分钟
-
-### 步骤 1: 克隆项目
+### 步骤 1：克隆项目并安装依赖
 
 ```bash
 git clone https://github.com/wuzf/2fa.git
 cd 2fa
-```
-
-### 步骤 2: 安装依赖
-
-```bash
 npm install
 ```
 
-### 步骤 3: 登录 Cloudflare
+### 步骤 2：登录 Cloudflare
 
 ```bash
 npx wrangler login
 ```
 
-浏览器会自动打开，完成授权。
+浏览器会自动打开授权页面，点击 **Allow** 完成授权。
 
-### 步骤 4: 创建 KV 命名空间
+### 步骤 3：创建 KV 命名空间
 
 ```bash
-# 生产环境
-npx wrangler kv:namespace create SECRETS_KV
-
-# 输出示例:
-# ✨ Success!
-# Add the following to your wrangler.toml:
-# [[kv_namespaces]]
-# binding = "SECRETS_KV"
-# id = "a98735f310c24a9786cfd388241258e7"
-
-# 预览环境
-npx wrangler kv:namespace create SECRETS_KV --preview
-
-# 输出示例:
-# preview_id = "b60723194832445f8f3abc1b69fb693c"
+npx wrangler kv namespace create SECRETS_KV            # 生产环境，输出 id
+npx wrangler kv namespace create SECRETS_KV --preview  # 预览环境，输出 preview_id
 ```
 
-### 步骤 5: 更新配置文件
+### 步骤 4：更新配置文件
 
-编辑 `wrangler.toml`，填入步骤 4 生成的 ID：
+编辑 `wrangler.toml`，填入上一步输出的 ID：
+
+部署脚本始终保留目标环境中明确填写的 `SECRETS_KV.id`。未填写时，只复用与当前 Worker 和环境名称精确匹配的唯一账户库；匹配到多个库或无法读取列表时会停止，要求先明确绑定，不会按模糊名称或列表顺序选择。开发环境的 KV 绑定独立配置，不继承生产环境 ID。
 
 ```toml
 [[kv_namespaces]]
 binding = "SECRETS_KV"
-id = "a98735f310c24a9786cfd388241258e7"        # 替换为你的 id
-preview_id = "b60723194832445f8f3abc1b69fb693c"  # 替换为你的 preview_id
+id = "你的 id"
+preview_id = "你的 preview_id"
 ```
 
-### 步骤 6: （推荐）配置加密密钥
-
-如果需要加密存储数据，设置 `ENCRYPTION_KEY`：
+### 步骤 5：（强烈推荐）配置加密密钥
 
 ```bash
-# 1. 生成加密密钥（256位）
+# 1. 生成加密密钥（256 位）
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
-# 示例输出:
-# dGhpc2lzYXNlY3VyZXJhbmRvbXRva2VuMTIzNDU2Nzg5MA==
-
-# 2. 设置为 Secret
+# 2. 设置为 Secret（提示输入时粘贴上面生成的密钥）
 npx wrangler secret put ENCRYPTION_KEY
-# 提示输入时，粘贴步骤1生成的密钥
 ```
 
-⚠️ **重要提示**：
+⚠️ **重要**：
 
-- 如果不设置 `ENCRYPTION_KEY`，数据将以明文形式存储在 KV 中
-- 一旦设置加密密钥，请务必妥善保管，丢失将无法解密数据
-- **建议生产环境启用加密**
+- 不设置 `ENCRYPTION_KEY` 时，数据将以明文存储在 KV 中，**建议生产环境启用加密**
+- 密钥丢失后已加密数据无法解密，请务必保存到密码管理器
 
-### 步骤 7: 部署
+### 步骤 6：部署并完成设置
 
 ```bash
 npm run deploy
 ```
 
-或使用 Wrangler 直接部署：
+部署成功后会输出 Worker URL。访问该 URL，按照页面提示设置管理密码即可（密码要求同上）。
 
-```bash
-npx wrangler deploy
-```
-
-**输出示例**:
-
-```
-✨ Total Upload: 518.76 KiB / gzip: 102.84 KiB
-✨ Deployed 2fa triggers (1.80 sec)
-   https://2fa.your-subdomain.workers.dev
-   schedule: 0 16 * * *
-Current Version ID: 63b40cd3-91de-421b-bd97-f556cc27fa83
-```
-
-### 步骤 8: 首次访问
-
-访问部署的 URL：
-
-```
-https://2fa.your-subdomain.workers.dev
-```
-
-首次访问会自动跳转到设置页面。
-
----
-
-## 首次设置
-
-### 设置管理密码
-
-首次访问应用时，系统会自动跳转到设置页面：
-
-**步骤**：
-
-1. 访问部署的 URL
-2. 自动跳转到 `/setup` 设置页面
-3. 输入管理密码
-4. 确认密码
-5. 点击"完成设置"
-6. 自动登录并跳转到主页
-
-**密码强度要求**：
-
-- ✅ 至少 8 个字符
-- ✅ 包含大写字母（A-Z）
-- ✅ 包含小写字母（a-z）
-- ✅ 包含数字（0-9）
-- ✅ 包含特殊字符（如 !@#$%^&\*）
-
-**密码安全**：
-
-- 密码使用 PBKDF2 加密（100,000 次迭代）
-- 哈希值存储在 Cloudflare KV
-- 使用 JWT token 进行身份验证
-- Token 存储在 HttpOnly Cookie
-
-**示例强密码**：
-
-```
-MySecure2FA@Pass2025
-CloudFlare#Worker2024
-Strong!Password123
-```
-
-### 后续登录
-
-设置完成后，后续访问输入密码即可登录：
-
-1. 访问应用 URL
-2. 显示登录界面
-3. 输入密码
-4. 点击"登录"
-5. JWT token 有效期 1 天
+部署脚本不修改 `wrangler.toml`：注入版本号和补全 KV ID 后的配置写入被 Git 忽略的临时文件 `wrangler.deploy.<进程号>.tmp.toml`，部署结束后自动删除。部署被强制中断时如有残留，可直接删除该文件。
 
 ---
 
@@ -884,55 +134,36 @@ Strong!Password123
 
 | 变量名                       | 必需 | 说明                                             | 生成方法 / 来源                                                               |
 | ---------------------------- | ---- | ------------------------------------------------ | ----------------------------------------------------------------------------- |
-| `ENCRYPTION_KEY`             | 推荐 | AES-GCM 256位加密密钥                            | `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `ENCRYPTION_KEY`             | 推荐 | AES-GCM 256 位加密密钥                           | `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
 | `ONEDRIVE_CLIENT_ID`         | 按需 | OneDrive OAuth 客户端 ID                         | Microsoft Entra 应用注册                                                      |
 | `ONEDRIVE_CLIENT_SECRET`     | 按需 | OneDrive OAuth 客户端密钥                        | Microsoft Entra 应用注册                                                      |
 | `GOOGLE_DRIVE_CLIENT_ID`     | 按需 | Google Drive OAuth 客户端 ID                     | Google Cloud Console                                                          |
 | `GOOGLE_DRIVE_CLIENT_SECRET` | 按需 | Google Drive OAuth 客户端密钥                    | Google Cloud Console                                                          |
 | `OAUTH_REDIRECT_BASE_URL`    | 按需 | OAuth 回调基准地址；使用自定义域名时推荐显式配置 | 例如 `https://2fa.example.com`                                                |
-| `LOG_LEVEL`                  | ❌   | 日志级别（DEBUG/INFO/WARN/ERROR）                | 默认 `INFO`                                                                   |
-| `SENTRY_DSN`                 | ❌   | Sentry 错误追踪 DSN                              | 从 Sentry 获取                                                                |
 
-如果你准备启用 OneDrive / Google Drive 远程备份，配置完上表中的 OAuth 变量后，再按 [网盘备份配置指南](CLOUD_DRIVE_SETUP.md) 完成平台回调地址和授权步骤。
+`OAUTH_REDIRECT_BASE_URL` 这类普通变量请写进 `wrangler.toml` 的 `[vars]`，或作为 Secret 添加。项目没有启用 `keep_vars`，只在 Dashboard 添加的 Text 变量会在下一次部署时被移除。
 
-⚠️ **认证说明**：
+如需启用 OneDrive / Google Drive 远程备份，配置上表中的 OAuth 变量后，参考 [网盘备份配置指南](CLOUD_DRIVE_SETUP.md) 完成回调地址和授权步骤。
 
-- 系统使用密码认证（存储在 KV 的 `user_password` 键）
-- 首次访问时通过网页设置管理员密码
-- 密码使用 PBKDF2 加密存储，无法逆向解密
+### 存储绑定
 
-### KV 命名空间
+| Binding         | 类型           | 用途                                         | 必需 | 存储的内容                                                 |
+| --------------- | -------------- | -------------------------------------------- | ---- | ---------------------------------------------------------- |
+| `SECRETS_KV`    | KV 命名空间    | 存储 2FA 密钥、备份、密码哈希                | ✅   | `secrets`, `user_password`, `backup_*`, `last_backup_hash` |
+| `SECRETS_STORE` | Durable Object | 依次处理读写密钥的请求，避免同时修改互相覆盖 | 推荐 | `secrets` 和 HOTP 计数器最近一次写入的副本                 |
 
-| Binding      | 用途                        | 必需 | 存储的键                                                   |
-| ------------ | --------------------------- | ---- | ---------------------------------------------------------- |
-| `SECRETS_KV` | 存储2FA密钥、备份、密码哈希 | ✅   | `secrets`, `user_password`, `backup_*`, `last_backup_hash` |
+Workers KV 是最终一致的存储：两个同时进行的修改都会读到同一份旧数据，后写入的一次会覆盖另一次；刚写入后的一段时间内还可能读到旧值。因此读写密钥的请求都交给 `SECRETS_STORE` 依次处理，它在自己的存储里保留最近一次写入的副本，并把每次写入同步到 `SECRETS_KV`。账户数据仍完整保存在 `SECRETS_KV` 中。
+
+`SECRETS_STORE` 使用 SQLite 存储后端，Workers 免费计划可用，由 `wrangler.toml` 中的 `migrations` 在首次部署时创建。没有这个绑定时（例如把 `dist/worker.js` 直接粘贴到 Dashboard）应用照常可用，但只有同一个实例收到的请求会依次处理，多台设备同时修改时仍可能丢失其中一次修改。
 
 ### Cron 触发器
 
 ```toml
 [triggers]
-crons = ["0 16 * * *"]  # 每天北京时间凌晨0点（UTC 16:00）
+crons = ["0 16 * * *"]  # 每天北京时间凌晨 0 点（UTC 16:00）检查并备份
 ```
 
-**备份机制**：
-
-- ✅ **事件驱动**: 数据变化后立即触发自动备份；有请求上下文时会转入后台执行
-- ✅ **定时检查**: 每天凌晨检查数据变化
-- ✅ **智能备份**: 使用 SHA-256 哈希检测变化
-- ✅ **自动清理**: 保留最新 100 个备份
-
-**调整备份频率**：
-
-```toml
-# 每6小时
-crons = ["0 */6 * * *"]
-
-# 每周日凌晨
-crons = ["0 0 * * 0"]
-
-# 每月1号凌晨
-crons = ["0 0 1 * *"]
-```
+备份机制：数据变化后立即触发自动备份；定时任务通过 SHA-256 哈希检测变化，仅在有变化时创建备份；自动保留最新 100 个备份。如需调整频率，修改 cron 表达式即可（每 6 小时：`"0 */6 * * *"`；每周日凌晨：`"0 0 * * 0"`）。定时任务同时删除已不再使用的 HOTP 计数器记录（已删除的密钥、编辑后换代的密钥、压实前的纪元），这一步只在绑定了 `SECRETS_STORE` 时执行。
 
 ---
 
@@ -948,7 +179,6 @@ name = "2fa"
 [[kv_namespaces]]
 binding = "SECRETS_KV"
 id = "your-default-kv-id"
-preview_id = "your-preview-kv-id"
 
 # 开发环境
 [env.development]
@@ -956,490 +186,247 @@ name = "2fa-dev"
 [[env.development.kv_namespaces]]
 binding = "SECRETS_KV"
 id = "your-dev-kv-id"
+
+[[env.development.durable_objects.bindings]]
+name = "SECRETS_STORE"
+class_name = "SecretsStore"
 ```
 
-### 为每个环境配置 Secrets
+绑定不会继承，每个环境都要单独声明 `SECRETS_KV` 和 `SECRETS_STORE`；顶层的 `migrations` 会被各环境继承。
 
 ```bash
-# 开发环境
-npx wrangler secret put ENCRYPTION_KEY --env development
-
-# 部署到开发环境
-npx wrangler deploy --env development
+npx wrangler secret put ENCRYPTION_KEY --env development  # 为环境单独配置 Secret
+npm run deploy:dev                                         # 部署到开发环境（保留版本注入流程）
 ```
 
 ### 自定义域名
 
-#### 方法 1: 在 Cloudflare Dashboard 配置
+**方法 1：Dashboard 配置** — Worker → **Triggers** → **Custom Domains** → **Add Custom Domain**，输入域名（如 `2fa.example.com`）。
 
-1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com)
-2. 选择你的域名
-3. 转到 **Workers & Pages** → 选择你的 Worker
-4. 点击 **Triggers** → **Custom Domains**
-5. 点击 **Add Custom Domain**
-6. 输入域名（如 `2fa.example.com`）
-7. 点击 **Add Custom Domain**
-
-#### 方法 2: 在 wrangler.toml 配置
+**方法 2：`wrangler.toml` 配置**（修改后需执行 `npm run deploy` 生效）：
 
 ```toml
 routes = [
-  { pattern = "2fa.example.com/*", zone_name = "example.com" }
+  { pattern = "2fa.example.com", zone_name = "example.com", custom_domain = true }
 ]
 ```
 
-**重新部署**：
+### CORS 说明
 
-```bash
-npx wrangler deploy
-```
-
-### CORS 白名单配置
-
-生产环境应该限制 CORS 来源。
-
-编辑 `src/utils/security.js`:
-
-```javascript
-const ALLOWED_ORIGINS = ['https://2fa.example.com', 'https://2fa.your-worker.workers.dev'];
-```
+CORS 采用动态同源策略：仅允许与当前请求 Host 同源的来源（自动适配 workers.dev 域名和自定义域名），无需任何配置。
 
 ---
 
-## 验证部署
+## 部署后验证
 
-### 健康检查清单
+快速确认部署是否成功：
 
-#### 1. 访问主页
-
-```
-✅ 页面正常加载
-✅ 首次访问跳转到设置页面
-✅ 无控制台错误
-```
-
-#### 2. 设置密码
-
-```
-✅ 密码强度验证正常工作
-✅ 设置成功后自动登录
-✅ Cookie 正确设置（HttpOnly）
-```
-
-#### 3. 登录认证
-
-```
-✅ 使用密码成功登录
-✅ JWT token 存储在 HttpOnly Cookie
-✅ 登录后可以访问主界面
-✅ Token 有效期 1 天
-```
-
-#### 4. 密钥管理
-
-```
-✅ 可以添加新密钥
-✅ 可以编辑密钥
-✅ 可以删除密钥
-✅ 密钥列表正确显示
-```
-
-#### 5. OTP 生成
-
-```
-✅ 验证码正确生成
-✅ 倒计时正常工作
-✅ 可以复制验证码
-✅ 支持 TOTP/HOTP
-```
-
-#### 6. 备份功能
-
-```
-✅ 可以手动触发备份
-✅ 可以查看备份列表
-✅ 可以导出备份（支持 TXT/JSON/CSV/HTML）
-✅ 可以恢复备份
-✅ 定时备份正常运行
-```
-
-#### 7. 加密功能
-
-```
-✅ 数据加密保存（如果配置了 ENCRYPTION_KEY）
-✅ 备份文件已加密
-✅ 可以正常解密读取
-```
-
-#### 8. PWA 功能
-
-```
-✅ Service Worker 注册成功
-✅ Manifest 文件可访问（/manifest.json）
-✅ 可以安装 PWA
-✅ 图标正确显示
-```
-
-#### 9. 工具箱功能
-
-```
-✅ 二维码解析正常
-✅ 二维码生成正常
-✅ Base32 编解码正常
-✅ 时间戳工具正常
-✅ 密钥检查器正常
-✅ 密钥生成器正常
-```
-
----
-
-## 故障排查
-
-### 问题 1: 部署失败
-
-**错误**: `Error: Unknown binding name: SECRETS_KV`
-
-**原因**: KV 命名空间未配置或 ID 错误
-
-**解决**:
-
-```bash
-# 1. 检查 wrangler.toml 中的 KV 配置
-# 2. 重新创建 KV 命名空间
-npx wrangler kv:namespace create SECRETS_KV
-# 3. 更新 wrangler.toml 中的 id
-```
-
----
-
-### 问题 2: 无法访问设置页面
-
-**现象**: 访问应用后显示错误或空白页
-
-**原因**: KV 存储未正确配置
-
-**解决**:
-
-```bash
-# 1. 检查 KV 是否已创建
-npx wrangler kv:namespace list
-
-# 2. 检查 wrangler.toml 中的 KV ID 是否正确
-# 3. 重新部署
-npx wrangler deploy
-```
-
----
-
-### 问题 3: 设置密码失败
-
-**错误**: 「密码强度不足」
-
-**原因**: 密码不满足强度要求
-
-**解决**: 确保密码满足以下要求：
-
-- 至少 8 个字符
-- 包含大写字母
-- 包含小写字母
-- 包含数字
-- 包含特殊字符
-
----
-
-### 问题 4: 登录失败
-
-**错误**: 「密码错误」
-
-**可能原因**:
-
-1. 密码输入错误
-2. KV 中的密码哈希损坏
-
-**解决**:
-
-**方法 1: 重置密码（删除 KV 数据）**
-
-```bash
-# 1. 列出 KV 中的所有键
-npx wrangler kv:key list --namespace-id=your-kv-id
-
-# 2. 删除密码哈希
-npx wrangler kv:key delete "user_password" --namespace-id=your-kv-id
-
-# 3. 重新访问应用，会自动跳转到设置页面
-```
-
-**方法 2: 通过 Dashboard 重置**
-
-1. 登录 Cloudflare Dashboard
-2. 转到 Workers & Pages → KV
-3. 选择你的 KV 命名空间
-4. 找到并删除 `user_password` 键
-5. 重新访问应用设置密码
-
----
-
-### 问题 5: 数据无法加密
-
-**现象**: 控制台显示「密钥以明文保存」
-
-**原因**: `ENCRYPTION_KEY` 未配置
-
-**解决**:
-
-```bash
-# 1. 生成加密密钥
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-
-# 2. 设置为 Secret
-npx wrangler secret put ENCRYPTION_KEY
-
-# 3. 重新部署
-npx wrangler deploy
-```
-
-⚠️ **注意**: 设置加密密钥后，旧的明文数据仍可读取，但新数据会被加密。
-
----
-
-### 问题 6: CORS 错误
-
-**错误**: 浏览器控制台显示 CORS 错误
-
-**原因**: 生产环境未正确配置 CORS 白名单
-
-**解决**:
-
-编辑 `src/utils/security.js`，添加你的域名：
-
-```javascript
-const ALLOWED_ORIGINS = ['https://your-domain.com', 'https://your-worker.workers.dev'];
-```
-
-重新部署：
-
-```bash
-npx wrangler deploy
-```
-
----
-
-### 问题 7: Service Worker 未注册
-
-**检查方法**:
-
-```
-Chrome DevTools (F12) → Application → Service Workers
-```
-
-**可能原因**:
-
-1. 未使用 HTTPS（Cloudflare Workers 自动提供）
-2. Service Worker 文件路径错误
-3. 浏览器不支持
-
-**解决**:
-
-```bash
-# 1. 确认 /sw.js 可以访问
-curl https://your-worker.workers.dev/sw.js
-
-# 2. 检查控制台错误
-# 3. 清除浏览器缓存后重试
-```
-
----
-
-### 问题 8: 备份未自动触发
-
-**检查方法**:
-
-```bash
-# 查看 Worker 日志
-npx wrangler tail
-```
-
-**可能原因**:
-
-1. Cron 触发器未配置
-2. 数据未发生变化（智能备份机制）
-3. Worker 未正确部署
-
-**解决**:
-
-检查 `wrangler.toml`:
-
-```toml
-[triggers]
-crons = ["0 16 * * *"]
-```
-
-确保已部署：
-
-```bash
-npx wrangler deploy
-```
-
-手动触发备份测试：
-
-```bash
-# 通过页面手动触发备份功能
-# 或使用 cron 触发器：
-npx wrangler tail  # 观察定时任务日志
-```
-
----
-
-### 问题 9: 忘记密码
-
-**解决方法**:
-
-**方法 1: 删除密码重新设置**
-
-```bash
-# 删除 KV 中的密码哈希
-npx wrangler kv:key delete "user_password" --namespace-id=your-kv-id
-
-# 重新访问应用设置密码
-```
-
-**方法 2: 通过 Dashboard 重置**
-
-1. Cloudflare Dashboard → Workers & Pages → KV
-2. 选择 SECRETS_KV
-3. 删除 `user_password` 和 `setup_completed` 键
-4. 重新访问应用
-
-⚠️ **注意**: 删除密码不会影响已存储的 2FA 密钥数据。
+1. 访问 Worker URL，首次自动跳转到 `/setup`，设置密码后能正常登录
+2. 添加一条测试密钥，验证码正常刷新；退出重新登录后数据仍在（KV 读写正常）
+3. 配置了 `ENCRYPTION_KEY` 的部署：在 Dashboard → **KV** 中查看 `secrets` 键，值应以 `v1:` 开头
+4. 建议定期通过 **批量导出** 保存备份，并实际演练一次备份恢复流程
 
 ---
 
 ## 升级指南
 
-### 一键部署升级（推荐）
+> ⚠️ **升级前请先备份数据**：通过应用内 **批量导出** 或 **还原配置 → 导出备份** 将数据导出到本地。
+> 正常升级**不要**删除 Worker、GitHub 仓库或 KV 命名空间，已配置的 Secrets（含 `ENCRYPTION_KEY`）会继续生效。
+>
+> ⚠️ **切换版本前后各约一分钟内不要修改账户**：从 1.11.0 之前的版本升级、回滚到 1.11.0 之前的版本，以及回滚后再次升级时，请在新版本部署生效的前后各约一分钟内，不要新增、编辑、删除或导入账户，也不要复制 HOTP 验证码。切换时新版本会读取 `SECRETS_KV` 中的数据接手，而刚写入 KV 的修改可能要约一分钟才能在各地读到；这段时间内再做修改，可能覆盖掉切换前一刻的那次修改。部署完成后稍等片刻再使用即可。
 
-适用于通过 Deploy 按钮创建 GitHub 仓库并连接 Cloudflare 的用户。
+### 一键部署用户：Sync Upstream 工作流
 
-一键部署创建的仓库不包含 `.github/workflows/` 目录。如果你的仓库里还没有 **Actions → Sync Upstream**，先在自己的仓库中新增文件 `.github/workflows/sync-upstream.yml`，内容复制自上游仓库文件：<https://github.com/wuzf/2fa/blob/main/.github/workflows/sync-upstream.yml>，并提交一次；之后就都按下面步骤升级。
+一键部署创建的是独立仓库（非 Fork），统一使用 **Sync Upstream** 工作流原地升级。
 
-1. 打开自己的 GitHub 仓库
-2. 进入 **Actions** → **Sync Upstream**
-3. 点击 **Run workflow**
-4. 等待工作流提交最新代码
-5. 工作流会自动以最新上游配置为基础，合并你当前仓库里的 Worker 名称、KV 绑定和常见部署配置
-6. 等待 Cloudflare 自动重新部署同一个 Worker
+**升级步骤**：
 
-**优点**：
+1. 打开一键部署时在您 GitHub 上生成的 2fa 仓库
+2. 进入 **Actions** → **Sync Upstream** → **Run workflow**
+3. 上游分支保持默认的 `main`，发起一次新运行
+4. 等待同步完成及 Cloudflare 自动部署，之后刷新应用即可
 
-- 不需要删除 Worker
-- 不需要删除 GitHub 仓库
-- 不需要重新绑定 KV
-- 不需要重新填写 `ENCRYPTION_KEY`
-- 不区分是否设置了 `ENCRYPTION_KEY`
+工作流会自动合并您仓库中的 Worker 名称、KV 绑定等部署配置，保留仓库中已有的工作流文件。升级到 1.11.0 时会同时带入 `SECRETS_STORE` 绑定和创建它的 `migrations`，部署时自动创建，无需手动操作。Cloudflare 会重新部署同一个 Worker；如未自动部署，在 **Deployments** 页面重新部署最新提交。
 
-**注意**：
+**没有 Sync Upstream 入口时**：一键部署导入仓库时不会复制 `.github/workflows`，所以新建的仓库里没有这个工作流，第一次升级前要先补上。把下面链接里的 `OWNER/REPO` 换成您的仓库（例如 `alice/2fa`）后在浏览器打开，GitHub 会填好文件名和内容，点 **Commit changes** 即可：
 
-- 工作流会优先保留当前仓库中的部署配置，自动合并 Worker 名称、KV ID、路由和常见现有设置
-- GitHub Actions 摘要里的 `wrangler.toml` diff 主要用于审计合并结果；只有在你维护了非常特殊的 `wrangler.toml` 配置时，才需要人工再检查
-- 如果你改过项目源码，而不只是用默认一键部署，请先自行评估差异
+```text
+https://github.com/OWNER/REPO/new/main?filename=.github/workflows/sync-upstream.yml&value=%23%20Save%20as%20.github%2Fworkflows%2Fsync-upstream.yml%20in%20your%20repository.%0A%23%20The%20upgrade%20steps%20come%20from%20wuzf%2F2fa%2C%20so%20this%20file%20never%20needs%20updating.%0Aname%3A%20Sync%20Upstream%0A%0Aon%3A%0A%20%20workflow_dispatch%3A%0A%20%20%20%20inputs%3A%0A%20%20%20%20%20%20upstream_ref%3A%0A%20%20%20%20%20%20%20%20description%3A%20Upstream%20branch%20or%20tag%20to%20sync%0A%20%20%20%20%20%20%20%20required%3A%20false%0A%20%20%20%20%20%20%20%20default%3A%20main%0A%0Apermissions%3A%0A%20%20contents%3A%20write%0A%0Ajobs%3A%0A%20%20sync%3A%0A%20%20%20%20uses%3A%20wuzf%2F2fa%2F.github%2Fworkflows%2Fsync-upstream.yml%40main%0A%20%20%20%20with%3A%0A%20%20%20%20%20%20upstream_ref%3A%20%24%7B%7B%20inputs.upstream_ref%20%7D%7D%0A
+```
 
-### 本地克隆升级
+也可以手动新建 `.github/workflows/sync-upstream.yml`，内容复制自 <https://github.com/wuzf/2fa/blob/main/.github/sync-upstream-entry.yml>。这个入口只有十几行，实际的升级步骤由上游的 Sync Upstream 工作流提供，以后不用再更新它。提交入口后 Cloudflare 会按当前版本重新部署一次，这是正常现象。之后按上面步骤升级。已有完整版入口的仓库不用改动；换成这个短入口后，以后同步流程的修复也会自动生效。
+
+工作流运行摘要中会展示 `wrangler.toml` 与上游的 diff，如果您维护了特殊配置，可据此确认合并结果。
+
+### 升级故障排查
+
+**Actions 成功、`package.json` 已更新，但 `src/utils/version.js` 仍是旧版本**：旧工作流的 `rsync -a` 只比较文件大小和修改时间。检出与克隆在同一秒完成时，大小相同但内容不同的文件可能被跳过。自 **v1.8.1** 起，包含 **Merge deployment config** 步骤的旧入口会自动按内容补齐遗漏，再合并原有部署配置；新版工作流同时使用 `--checksum` 避免漏同步。请选择 `main`（或 `v1.8.1`）发起一次新的 **Run workflow**，确认仓库中的版本文件更新，再等待 Cloudflare 部署该提交。无需手动编辑 YAML。不要只手动改版本号，因为其他同样大小的代码文件也可能漏更新。
+
+如需手动修正旧工作流，可在自己的 `.github/workflows/sync-upstream.yml` 中将 `rsync -a --delete` 改为 `rsync -a --checksum --delete`，保留其余参数和步骤，提交后发起新运行。若仓库版本已正确而页面仍旧，请检查 Cloudflare 是否成功部署最新提交，再刷新页面。
+
+**提示 `refusing to allow a GitHub App to create or update workflow ... without workflows permission`**：这是旧同步流程尝试更新工作流文件时触发的权限错误。修复发布到上游 `main` 后，包含 **Merge deployment config**（自动合并部署配置）步骤的现有 **Sync Upstream** 工作流会自动获得兼容修复，包括 [Issue #18](https://github.com/wuzf/2fa/issues/18) 对应的版本。直接选择 `main`，通过 **Run workflow** 发起一次新运行即可，无需手动修改 YAML、增加令牌权限或配置 PAT。不要选择不含修复的旧版本标签。
+
+同步会保留您仓库中原有的工作流文件，因此上游新增的统计等工作流不会影响应用升级。极早期、不包含自动合并部署配置步骤的入口无法自动获得这个修复，需要先把入口换成上面的短入口；完全没有入口的仓库按上面的方法补上即可。
+
+### 命令行部署用户
 
 ```bash
-# 1. 备份当前数据
-# 在应用中导出所有密钥
-
-# 2. 拉取最新代码
 git pull origin main
-
-# 3. 更新依赖
 npm install
-
-# 4. 检查配置变更
-git diff wrangler.toml
-
-# 5. 部署新版本
-npx wrangler deploy
+git diff wrangler.toml   # 检查配置变更，确认自己维护的 KV ID、路由等仍然正确，并保留上游新增的绑定（如 SECRETS_STORE）
+npm run deploy
 ```
+
+### 回滚到 1.11.0 之前的版本
+
+1.11.0 起部署会创建 Durable Object `SecretsStore`。Cloudflare 不允许跨越 Durable Object 类的变更回滚，因此 Dashboard 的 **Deployments** 页面无法回到 1.11.0 之前的版本，需要用命令行部署旧版本。
+
+> ⚠️ **一键部署（Git 自动构建）用户**：
+>
+> - 不要用 Sync Upstream 填写 1.11.0 之前的标签来回滚。旧版本的合并脚本不处理迁移，旧版 `wrangler.toml` 也没有 `SECRETS_STORE` 和 `migrations`，同步后的自动部署会失败：Worker 仍停在 1.11.0，仓库里却已经是旧代码。请克隆自己的仓库，按下面的步骤用命令行回滚。
+> - 命令行回滚后，GitHub 仓库里仍是 1.11.0 的代码，迁移只有 `v1`。之后任何推送或 Sync Upstream 触发的自动构建都会按仓库内容重新部署：Wrangler 找不到线上的 `rollback-1` 标签，会重放全部迁移，结果可能是把 1.11.0 部署回去、撤销回滚，也可能部署失败。回滚期间请在 Worker 的 **Settings → Build** 中断开 Git 仓库连接，或者确保不推送、不运行 Sync Upstream。
+> - 决定再升级时，先在仓库的 `wrangler.toml` 末尾追加下文「之后再升级」的两段迁移并提交，再恢复连接或运行 Sync Upstream。
+
+命令行回滚步骤：
+
+1. 检出旧版本，例如 v1.10.0。命令行部署用户在自己的克隆中执行 `git fetch --tags` 和 `git checkout v1.10.0`。一键部署生成的仓库没有上游的版本标签，克隆后先取标签：
+
+   ```bash
+   git fetch https://github.com/wuzf/2fa.git tag v1.10.0 --no-tags
+   git checkout v1.10.0
+   ```
+
+2. 把旧版 `wrangler.toml` 指向正在运行的 Worker。旧版配置写的是 `name = "2fa"`，也没有 KV ID，原样部署会部署到名为 `2fa` 的 Worker，并绑定按这个名称找到或新建的 KV，而不是回滚当前实例。部署前按当前部署改好：
+   - `name`：Cloudflare **Workers & Pages** 列表中这个实例的 Worker 名称。
+   - `[[kv_namespaces]]`（`binding = "SECRETS_KV"`）下加上 `id`：在 Worker 的 **Settings → Bindings** 中查看 `SECRETS_KV` 绑定的命名空间，到 KV 页面复制它的 ID，也可以用 `npx wrangler kv namespace list` 查看。
+   - `routes`、`[triggers]` 和 `[vars]` 中自己加的变量：与当前部署保持一致。命令行部署用户照抄自己 1.11.0 的 `wrangler.toml`；一键部署用户对照自己仓库里的 `wrangler.toml` 和 Worker 的 **Settings → Domains & Routes**。
+
+   确认文件中没有 `SECRETS_STORE` 绑定，然后在文件末尾加上：
+
+   ```toml
+   [[migrations]]
+   tag = "v1"
+   new_sqlite_classes = ["SecretsStore"]
+
+   [[migrations]]
+   tag = "rollback-1"
+   deleted_classes = ["SecretsStore"]
+   ```
+
+3. 执行 `npm ci` 和 `npm run deploy`（未登录 Cloudflare 时先执行 `npx wrangler login`），确认部署输出中的 Worker 名称与 Dashboard 中的实例一致。
+
+账户数据始终完整保存在 `SECRETS_KV` 中，删除这个类只会删掉它保存的副本，旧版本照常读取全部数据。之后再升级时，新版本的 `wrangler.toml` 已有 `v1`，在文件末尾追加：
+
+```toml
+[[migrations]]
+tag = "rollback-1"
+deleted_classes = ["SecretsStore"]
+
+[[migrations]]
+tag = "restore-1"
+new_sqlite_classes = ["SecretsStore"]
+```
+
+升级后的版本会接管旧版本期间写入的数据。这几段迁移记录了线上 Worker 的迁移历史，之后不要删除：Sync Upstream 合并配置时会保留它们，并把上游以后新增的迁移接在后面；无法自动合并时（例如某段迁移和上游的同名迁移内容不同），同步会停止并提示手动合并，不会改动仓库。标签不要用 `v2`、`v3` 这类名字，以免和上游以后的迁移重名；再次回滚时保留已有的迁移，按同样方式追加 `rollback-2`，再升级时追加 `restore-2`。要回到 1.8.0 之前的版本，还需要先完成下一节的压实。
+
+### 回滚到 1.8.0 之前的版本
+
+1.8.0 起，HOTP 密钥每次复制验证码后的计数器递增写入独立的 KV 键（`hotp-counter:*`，当前纪元记录在 `hotp-counter-epoch`），不再改写加密主文档 `secrets`。1.8.0 之前的版本只读主文档，**直接回滚会让 HOTP 计数器退回到升级时的值**，之后生成的验证码会被服务方判定为已使用。
+
+回滚前先登录，再调用一次压实接口把有效计数器写回主文档：
+
+```bash
+# 1. 登录并保存 Cookie
+curl -X POST https://your-worker.workers.dev/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"credential":"YOUR_PASSWORD"}' \
+  -c cookies.txt
+
+# 2. 压实 HOTP 计数器
+curl -X POST https://your-worker.workers.dev/api/secrets/counters/compact \
+  -H "X-Confirm-Maintenance: compact-hotp-counters" \
+  -b cookies.txt
+```
+
+返回 `"success":true` 并带有 `compactedCount`（HOTP 密钥数）即完成，之后再到 Cloudflare Dashboard → Worker → **Deployments** 回滚，或用命令行部署旧版本。返回 500 时直接重试，轮换成功前旧计数器仍然有效。压实期间不要在其他设备复制 HOTP 验证码。没有 HOTP 密钥的部署可以跳过这一步。
+
+接口细节见 [API 参考：压实 HOTP 计数器](API_REFERENCE.md#压实-hotp-计数器)。
 
 ---
 
-## 生产环境最佳实践
+## 故障排查
 
-### 安全
+### 部署前的环境问题
 
-- ✅ 设置强管理密码
-- ✅ 启用 `ENCRYPTION_KEY` 加密数据
-- ✅ 配置 CORS 白名单
-- ✅ 使用自定义域名
-- ✅ 定期更新依赖
-- ✅ 启用 Rate Limiting（已内置）
+- **`npx wrangler login` 浏览器未自动打开**：复制命令行中显示的 `https://` 链接，手动粘贴到浏览器完成授权
+- **`npm install` 失败**：检查网络后重试，或使用国内镜像 `npm install --registry=https://registry.npmmirror.com`
+- **一键部署提示 `Repository not found`**：确认已登录 GitHub 并授权 Cloudflare Workers 访问，重试部署
 
-### 性能
+### 部署或访问异常（Error 1101 / "服务未配置" / Unknown binding）
 
-- ✅ 使用 Cloudflare CDN
-- ✅ 启用 Service Worker 缓存
-- ✅ 使用生产环境 KV
-- ✅ 配置合理的 Cron 间隔
+原因基本都是 KV 未正确绑定：
 
-### 监控
+1. 检查 Worker **Settings** → **Bindings** 中是否存在名为 `SECRETS_KV` 的 KV 绑定（名称需完全一致，区分大小写）
+2. 命令行部署用户检查 `wrangler.toml` 中的 KV `id` 是否正确（`npx wrangler kv namespace list` 可查看现有命名空间）
+3. 修正后重新部署
 
-- ✅ 配置 Sentry 错误追踪
-- ✅ 定期查看 Worker 日志
-- ✅ 监控 KV 存储使用量
-- ✅ 设置告警规则
+### 忘记管理密码 / 登录失败
 
-### 备份
+删除 KV 中的密码哈希后重新设置（不影响已存储的 2FA 密钥数据）：
 
-- ✅ 启用自动备份（已内置）
-- ✅ 定期手动导出备份
-- ✅ 备份管理密码到密码管理器
-- ✅ 备份加密密钥到安全位置
-- ✅ 测试备份恢复流程
+- **Dashboard 方式**：**Workers & Pages** → **KV** → 选择您的命名空间 → 删除 `user_password` 键
+- **命令行方式**：
+
+  ```bash
+  npx wrangler kv key delete "user_password" --namespace-id=your-kv-id
+  ```
+
+之后重新访问应用，会自动跳转到设置页面。
+
+### 数据以明文保存
+
+未配置 `ENCRYPTION_KEY`。按部署章节的说明生成并设置密钥后重新部署；旧的明文数据仍可读取，新数据将被加密。
+
+### 忘记保存加密密钥
+
+Cloudflare 不会再次显示 Secret 原值。如果尚未添加数据，可直接重新生成并覆盖 `ENCRYPTION_KEY`；如果已有加密数据，旧数据无法解密，只能重新导入。
+
+### CORS 错误
+
+系统按请求 Host 动态放行同源请求，正常直接访问不会出现 CORS 错误。如果浏览器控制台出现 CORS 报错，通常是通过反向代理或中转域名访问导致回源 `Host` 与页面域名不一致——请改用 Cloudflare 原生的自定义域名绑定（见上文"自定义域名"），或确保代理透传正确的 `Host` 头。
+
+### 备份未自动触发
+
+1. 检查 `wrangler.toml` 中的 `[triggers]` cron 配置是否存在
+2. 定时备份仅在数据发生变化时创建（SHA-256 哈希比对），数据无变化不生成新备份
+3. `npx wrangler tail` 可实时查看 Worker 日志确认执行情况
+
+### 页面异常 / Service Worker 问题
+
+强制刷新（`Ctrl + F5`）或清除浏览器缓存后重试；可在 DevTools（F12）→ **Application** → **Service Workers** 中查看注册状态。
 
 ---
 
 ## 卸载
 
-### 删除 Worker
-
 ```bash
+# 删除 Worker
 npx wrangler delete
-```
 
-### 删除 KV 数据
-
-```bash
-# 列出所有 KV 命名空间
-npx wrangler kv:namespace list
-
-# 删除指定命名空间（谨慎操作！）
-npx wrangler kv:namespace delete --namespace-id=your-kv-id
-```
-
-### 清理 Secrets
-
-```bash
-# 列出所有 Secrets
-npx wrangler secret list
-
-# 删除指定 Secret
-npx wrangler secret delete ENCRYPTION_KEY
-npx wrangler secret delete LOG_LEVEL
-npx wrangler secret delete SENTRY_DSN
+# 删除 KV 命名空间（谨慎操作，数据将永久丢失！）
+npx wrangler kv namespace list
+npx wrangler kv namespace delete --namespace-id=your-kv-id
 ```
 
 ---
 
 ## 相关文档
 
-- [架构文档](ARCHITECTURE.md) - 了解系统设计
-- [API 参考](API_REFERENCE.md) - API 端点文档
-- [网盘备份配置指南](CLOUD_DRIVE_SETUP.md) - OneDrive / Google Drive OAuth 配置步骤
-- [功能文档](features/) - 各功能详解
-- [PWA 指南](PWA_GUIDE.md) - PWA 安装和配置
+- [网盘备份配置指南](CLOUD_DRIVE_SETUP.md) — WebDAV / S3 / OneDrive / Google Drive 远程备份配置
+- [API 参考](API_REFERENCE.md) — API 端点文档
+- [架构文档](ARCHITECTURE.md) — 系统设计
+- [PWA 指南](PWA_GUIDE.md) — PWA 安装和配置
 
 ---
 
-**支持**: 如有问题，请提交 [GitHub Issue](https://github.com/wuzf/2fa/issues)
+**支持**：如有问题，请提交 [GitHub Issue](https://github.com/wuzf/2fa/issues)

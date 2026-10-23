@@ -570,6 +570,23 @@ export function getModalStyles() {
       line-height: 1.5;
     }
 
+    .login-insecure-warning {
+      background: var(--danger-light);
+      border-left: 4px solid var(--danger-dark);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      color: var(--danger-dark);
+      line-height: 1.5;
+      text-align: left;
+    }
+
+    .login-insecure-warning strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
     .login-modal-hint {
       color: var(--text-tertiary);
       font-size: 12px;
@@ -1140,6 +1157,22 @@ export function getModalStyles() {
         padding: 12px 16px;
         font-size: 14px;
         min-width: 100px;
+      }
+
+      /* Keep short numeric choices on one row; wrap longer action labels when needed. */
+      #timestampModal .period-selector > .btn,
+      #keyGeneratorModal .radio-group > .btn {
+        flex: 1;
+        min-width: 0;
+      }
+
+      #qrDecodeModal .scan-options,
+      #restoreModal .backup-actions {
+        flex-wrap: wrap;
+      }
+
+      #restoreModal .backup-actions > .btn {
+        flex: 1 1 100px;
       }
 
       .scanner-container {
@@ -1894,9 +1927,9 @@ export function getModalStyles() {
 
     .import-progress-bar {
       width: 100%;
-      height: 10px;
+      height: var(--progress-height);
       background: var(--progress-bg);
-      border-radius: 999px;
+      border-radius: 0;
       overflow: hidden;
       margin-bottom: 10px;
     }
@@ -2104,13 +2137,17 @@ export function getModalStyles() {
 
     /* ==================== 设置模态框样式 ==================== */
 
-    .settings-modal-content {
+    .modal-content.settings-modal-content {
       max-width: var(--fab-modal-lg-max-width, 680px);
+      display: flex;
+      flex-direction: column;
+      /* Keep padding on the header/body; generic modal padding must not clip the scroll area. */
       padding: 0;
       overflow: hidden;
     }
 
     .settings-modal-content .modal-header {
+      flex-shrink: 0;
       padding: 20px 24px;
       border-bottom: 1px solid var(--border-primary);
       margin-bottom: 0;
@@ -2118,8 +2155,9 @@ export function getModalStyles() {
 
     .settings-layout {
       display: flex;
-      min-height: 400px;
-      max-height: calc(85vh - 70px);
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
     }
 
     .settings-tabs {
@@ -2168,6 +2206,8 @@ export function getModalStyles() {
 
     .settings-content {
       flex: 1;
+      min-width: 0;
+      min-height: 0;
       overflow-y: auto;
       padding: 20px 24px;
     }
@@ -2468,8 +2508,6 @@ export function getModalStyles() {
     @media (max-width: 600px) {
       .settings-layout {
         flex-direction: column;
-        min-height: auto;
-        max-height: calc(85vh - 70px);
       }
 
       .settings-tabs {

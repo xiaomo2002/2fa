@@ -14,6 +14,8 @@ vi.mock('../../src/api/secrets/index.js', () => ({
   handleAddSecret: vi.fn(async (request, env) => new Response(JSON.stringify({ success: true }), { status: 201 })),
   handleUpdateSecret: vi.fn(async (request, env) => new Response(JSON.stringify({ success: true }), { status: 200 })),
   handleDeleteSecret: vi.fn(async (request, env) => new Response(JSON.stringify({ success: true }), { status: 200 })),
+  handleAdvanceHOTPCounter: vi.fn(async (request, env) => new Response(JSON.stringify({ success: true }), { status: 200 })),
+  handleCompactHOTPCounters: vi.fn(async (request, env) => new Response(JSON.stringify({ success: true }), { status: 200 })),
   handleGenerateOTP: vi.fn(async (secret, request) => new Response(JSON.stringify({ token: '123456' }), { status: 200 })),
   handleBatchAddSecrets: vi.fn(async (request, env) => new Response(JSON.stringify({ success: true }), { status: 200 })),
   handleExportSecrets: vi.fn(async (request, env) => new Response(JSON.stringify({ success: true }), { status: 200 })),
@@ -90,9 +92,13 @@ vi.mock('../../src/utils/auth.js', () => ({
   verifyAuthWithDetails: vi.fn(async (request, env) => ({ valid: true, token: 'test-token' })),
   requiresAuth: vi.fn((pathname) => {
     // Public routes
-    const publicPaths = ['/', '/api/login', '/api/logout', '/api/refresh-token', '/api/setup', '/setup', '/manifest.json', '/sw.js', '/icon-192.png', '/icon-512.png', '/api/onedrive/oauth/callback', '/api/gdrive/oauth/callback'];
-    if (publicPaths.includes(pathname)) return false;
-    if (pathname.startsWith('/otp')) return false;
+    const publicPaths = ['/', '/api/login', '/api/logout', '/api/refresh-token', '/api/setup', '/api/time', '/setup', '/manifest.json', '/sw.js', '/icon-192.png', '/icon-512.png', '/api/onedrive/oauth/callback', '/api/gdrive/oauth/callback'];
+    if (publicPaths.includes(pathname)) {
+      return false;
+    }
+    if (pathname.startsWith('/otp')) {
+      return false;
+    }
     return true;
   }),
   createUnauthorizedResponse: vi.fn((message, request) => new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })),
@@ -105,6 +111,12 @@ vi.mock('../../src/utils/auth.js', () => ({
 
 // Mock response utilities
 vi.mock('../../src/utils/response.js', () => ({
+  createJsonResponse: vi.fn((data, status = 200, request = null, additionalHeaders = {}) => {
+    return new Response(JSON.stringify(data), {
+      status,
+      headers: { 'Content-Type': 'application/json', ...additionalHeaders }
+    });
+  }),
   createErrorResponse: vi.fn((error, message, status = 500, request = null) => {
     return new Response(
       JSON.stringify({ error, message, timestamp: new Date().toISOString() }),
@@ -282,6 +294,7 @@ describe('Router Handler', () => {
       const response = await handleRequest(request, env);
 
       expect(response.status).toBe(401);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
     });
 
     it('未配置 KV 存储时应该返回 503', async () => {
@@ -441,6 +454,41 @@ describe('Router Handler', () => {
   });
 
   describe('handleRequest - API 路由分发', () => {
+    it('应该公开返回服务端时间且不访问认证或 KV', async () => {
+      const { checkIfSetupRequired, requiresAuth, verifyAuthWithDetails } = await import('../../src/utils/auth.js');
+      const request = createMockRequest({ pathname: '/api/time' });
+      const env = createMockEnv();
+      const beforeRequest = Date.now();
+
+      const response = await handleRequest(request, env);
+      const afterRequest = Date.now();
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(body.serverTimeMs).toBeGreaterThanOrEqual(beforeRequest);
+      expect(body.serverTimeMs).toBeLessThanOrEqual(afterRequest);
+      expect(checkIfSetupRequired).not.toHaveBeenCalled();
+      expect(requiresAuth).not.toHaveBeenCalled();
+      expect(verifyAuthWithDetails).not.toHaveBeenCalled();
+      expect(env.SECRETS_KV.get).not.toHaveBeenCalled();
+    });
+
+    it('应该拒绝 /api/time 的非 GET 请求且不访问认证或 KV', async () => {
+      const { checkIfSetupRequired, requiresAuth, verifyAuthWithDetails } = await import('../../src/utils/auth.js');
+      const request = createMockRequest({ method: 'POST', pathname: '/api/time' });
+      const env = createMockEnv();
+
+      const response = await handleRequest(request, env);
+
+      expect(response.status).toBe(405);
+      expect(response.headers.get('Allow')).toBe('GET');
+      expect(checkIfSetupRequired).not.toHaveBeenCalled();
+      expect(requiresAuth).not.toHaveBeenCalled();
+      expect(verifyAuthWithDetails).not.toHaveBeenCalled();
+      expect(env.SECRETS_KV.get).not.toHaveBeenCalled();
+    });
+
     it('应该处理 GET /api/secrets', async () => {
       const { handleGetSecrets } = await import('../../src/api/secrets/index.js');
 
@@ -449,7 +497,7 @@ describe('Router Handler', () => {
 
       const response = await handleRequest(request, env);
 
-      expect(handleGetSecrets).toHaveBeenCalledWith(env);
+      expect(handleGetSecrets).toHaveBeenCalledWith(env, request);
       expect(response.status).toBe(200);
     });
 
@@ -540,6 +588,79 @@ describe('Router Handler', () => {
 
       expect(handleDeleteSecret).toHaveBeenCalledWith(request, env, undefined);
       expect(response.status).toBe(200);
+    });
+
+		it('应该处理 POST /api/secrets/{id}/counter', async () => {
+			const { handleAdvanceHOTPCounter } = await import('../../src/api/secrets/index.js');
+			const request = createMockRequest({
+				method: 'POST',
+				pathname: '/api/secrets/test-id/counter',
+				body: {
+					expectedCounter: 1,
+					expectedSecret: 'JBSWY3DPEHPK3PXP',
+					expectedDigits: 6,
+					expectedAlgorithm: 'SHA1'
+				}
+			});
+			const env = createMockEnv();
+
+			const response = await handleRequest(request, env);
+
+			expect(handleAdvanceHOTPCounter).toHaveBeenCalledWith(request, env, undefined);
+			expect(response.status).toBe(200);
+		});
+
+		it('应该拒绝 HOTP counter 路径的不支持方法', async () => {
+			const { handleAdvanceHOTPCounter } = await import('../../src/api/secrets/index.js');
+			const request = createMockRequest({
+				method: 'PUT',
+				pathname: '/api/secrets/test-id/counter',
+				body: { expectedCounter: 1 }
+			});
+			const env = createMockEnv();
+
+			const response = await handleRequest(request, env);
+
+			expect(response.status).toBe(405);
+			expect(handleAdvanceHOTPCounter).not.toHaveBeenCalled();
+		});
+
+		it('应该处理 POST /api/secrets/counters/compact', async () => {
+			const { handleCompactHOTPCounters } = await import('../../src/api/secrets/index.js');
+			const request = createMockRequest({
+				method: 'POST',
+				pathname: '/api/secrets/counters/compact',
+				headers: { 'X-Confirm-Maintenance': 'compact-hotp-counters' }
+			});
+			const env = createMockEnv();
+
+			const response = await handleRequest(request, env);
+
+			expect(handleCompactHOTPCounters).toHaveBeenCalledWith(request, env, undefined);
+			expect(response.status).toBe(200);
+		});
+
+		it('应该拒绝compact路径的不支持方法', async () => {
+			const { handleCompactHOTPCounters } = await import('../../src/api/secrets/index.js');
+			const request = createMockRequest({ method: 'GET', pathname: '/api/secrets/counters/compact' });
+			const env = createMockEnv();
+
+			const response = await handleRequest(request, env);
+
+			expect(response.status).toBe(405);
+			expect(handleCompactHOTPCounters).not.toHaveBeenCalled();
+		});
+
+    it.each(['PUT', 'DELETE'])('应该拒绝多层密钥路径的 %s 请求', async (method) => {
+      const { handleUpdateSecret, handleDeleteSecret } = await import('../../src/api/secrets/index.js');
+      const request = createMockRequest({ method, pathname: '/api/secrets/extra/test-id' });
+      const env = createMockEnv();
+
+      const response = await handleRequest(request, env);
+
+      expect(response.status).toBe(404);
+      expect(handleUpdateSecret).not.toHaveBeenCalled();
+      expect(handleDeleteSecret).not.toHaveBeenCalled();
     });
 
     it('应该拒绝 /api/secrets/{id} 缺少 ID', async () => {

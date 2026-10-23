@@ -1,3 +1,4 @@
+import { getLanguageHeaders, localizeResponseData } from './i18n.js';
 import { getSecurityHeaders } from './security.js';
 import { getLogger } from './logger.js';
 
@@ -384,6 +385,7 @@ export function createRateLimitResponse(rateLimitInfo, request = null) {
 
 	let headers = {
 		'Content-Type': 'application/json',
+		...getLanguageHeaders(request),
 		'Retry-After': retryAfter.toString(),
 		'X-RateLimit-Limit': rateLimitInfo.limit.toString(),
 		'X-RateLimit-Remaining': rateLimitInfo.remaining.toString(),
@@ -405,15 +407,20 @@ export function createRateLimitResponse(rateLimitInfo, request = null) {
 	}
 
 	return new Response(
-		JSON.stringify({
-			error: '请求过于频繁',
-			message: `您的请求次数过多，请在 ${retryAfter} 秒后重试`,
-			retryAfter: retryAfter,
-			limit: rateLimitInfo.limit,
-			remaining: rateLimitInfo.remaining,
-			resetAt: new Date(rateLimitInfo.resetAt).toISOString(),
-			algorithm: rateLimitInfo.algorithm || 'sliding-window',
-		}),
+		JSON.stringify(
+			localizeResponseData(
+				{
+					error: '请求过于频繁',
+					message: `您的请求次数过多，请在 ${retryAfter} 秒后重试`,
+					retryAfter: retryAfter,
+					limit: rateLimitInfo.limit,
+					remaining: rateLimitInfo.remaining,
+					resetAt: new Date(rateLimitInfo.resetAt).toISOString(),
+					algorithm: rateLimitInfo.algorithm || 'sliding-window',
+				},
+				request,
+			),
+		),
 		{
 			status: 429,
 			headers,
@@ -459,6 +466,17 @@ export function getClientIdentifier(request, type = 'ip') {
 		default:
 			return request.headers.get('CF-Connecting-IP') || 'unknown';
 	}
+}
+
+/**
+ * 生成按操作区分的限流键
+ * 每类操作单独计数，避免删除账户、保存设置等操作用掉登录的配额
+ * @param {string} scope - 操作名，如 'login'、'settings'
+ * @param {string} clientId - 客户端标识（通常是 IP）
+ * @returns {string} 限流键
+ */
+export function scopedRateLimitKey(scope, clientId) {
+	return `${scope}:${clientId}`;
 }
 
 /**

@@ -5,14 +5,19 @@
  * - handleBatchAddSecrets: 批量导入密钥（带 Rate Limiting）
  */
 
-import { saveSecretsToKV } from './shared.js';
-import { decryptSecrets } from '../../utils/encryption.js';
+import { saveSecretsToKV, getAllSecrets } from './shared.js';
 import { getLogger } from '../../utils/logger.js';
 import { validateRequest, batchImportSchema, addSecretSchema, checkDuplicateSecret } from '../../utils/validation.js';
 import { createJsonResponse, createErrorResponse } from '../../utils/response.js';
-import { checkRateLimit, getClientIdentifier, createRateLimitResponse, RATE_LIMIT_PRESETS } from '../../utils/rateLimit.js';
+import {
+	checkRateLimit,
+	scopedRateLimitKey,
+	getClientIdentifier,
+	createRateLimitResponse,
+	RATE_LIMIT_PRESETS,
+} from '../../utils/rateLimit.js';
 import { ValidationError, StorageError, CryptoError, ConfigurationError, errorToResponse, logError } from '../../utils/errors.js';
-import { KV_KEYS, LIMITS } from '../../utils/constants.js';
+import { LIMITS } from '../../utils/constants.js';
 
 /**
  * 批量添加密钥 (带 Rate Limiting)
@@ -36,7 +41,7 @@ export async function handleBatchAddSecrets(request, env, ctx) {
 	try {
 		// 🛡️ Rate Limiting: 防止批量操作滥用
 		const clientIP = getClientIdentifier(request, 'ip');
-		const rateLimitInfo = await checkRateLimit(clientIP, env, RATE_LIMIT_PRESETS.bulk);
+		const rateLimitInfo = await checkRateLimit(scopedRateLimitKey('batch-import', clientIP), env, RATE_LIMIT_PRESETS.bulk);
 
 		if (!rateLimitInfo.allowed) {
 			logger.warn('批量添加速率限制超出', {
@@ -44,7 +49,7 @@ export async function handleBatchAddSecrets(request, env, ctx) {
 				limit: rateLimitInfo.limit,
 				resetAt: rateLimitInfo.resetAt,
 			});
-			return createRateLimitResponse(rateLimitInfo);
+			return createRateLimitResponse(rateLimitInfo, request);
 		}
 
 		// 🔍 使用验证中间件解析和验证请求（仅验证顶层结构）
@@ -65,9 +70,8 @@ export async function handleBatchAddSecrets(request, env, ctx) {
 			chunkIndex < chunkCount &&
 			secrets.length === LIMITS.BULK_IMPORT_CHUNK_SIZE;
 
-		// 从KV存储获取现有密钥列表（可能是加密的）
-		const existingSecretsData = await env.SECRETS_KV.get(KV_KEYS.SECRETS, 'text');
-		const existingSecrets = await decryptSecrets(existingSecretsData, env);
+		// 获取包含HOTP sidecar有效计数器的现有密钥列表
+		const existingSecrets = await getAllSecrets(env);
 
 		const results = [];
 		let successCount = 0;

@@ -14,10 +14,9 @@
  */
 
 import { handleRequest, handleCORS } from './router/handler.js';
-import { decryptSecrets } from './utils/encryption.js';
+import { cleanupHOTPCounterStates, readSecretsSnapshot } from './storage/secrets-store.js';
 import { getLogger, createRequestLogger, PerformanceTimer } from './utils/logger.js';
 import { getMonitoring, ErrorSeverity } from './utils/monitoring.js';
-import { KV_KEYS } from './utils/constants.js';
 import { pushToAllWebDAV } from './utils/webdav.js';
 import { pushToAllS3 } from './utils/s3.js';
 import { pushToAllOneDrive } from './utils/onedrive.js';
@@ -28,42 +27,8 @@ import { createBackupEntry, isValidBackupKey, parseBackupTimeFromKey } from './u
 import { generateDataHash, getPendingDataHash, isPendingDataHashFresh, saveDataHash } from './utils/data-hash.js';
 
 export { generateDataHash, saveDataHash } from './utils/data-hash.js';
-
-/**
- * 获取所有密钥
- * 🔒 自动解密数据
- * @param {Object} env - 环境变量对象
- * @returns {Array} 密钥列表
- */
-async function getAllSecrets(env) {
-	const logger = getLogger(env);
-
-	try {
-		// 从 KV_KEYS.SECRETS 键获取所有密钥（可能是加密的）
-		const secretsData = await env.SECRETS_KV.get(KV_KEYS.SECRETS, 'text');
-
-		if (!secretsData) {
-			logger.info('没有找到密钥数据');
-			return [];
-		}
-
-		// 🔒 解密数据（自动检测是否加密）
-		const secrets = await decryptSecrets(secretsData, env);
-
-		// 确保返回的是数组
-		if (Array.isArray(secrets)) {
-			return secrets;
-		} else {
-			logger.warn('密钥数据格式不正确，期望数组', {
-				actualType: typeof secrets,
-			});
-			return [];
-		}
-	} catch (error) {
-		logger.error('获取密钥列表失败', {}, error);
-		return [];
-	}
-}
+// Durable Object class bound as SECRETS_STORE in wrangler.toml.
+export { SecretsStore } from './storage/secrets-store.js';
 
 /**
  * 检查数据是否发生变化
@@ -373,6 +338,17 @@ export default {
 		// 传给 saveDataHash 以便清理分片导入等场景下残留的 pending。
 		const backupStartedAt = Date.now();
 
+		// Independent of the backup below, which may end early when nothing changed.
+		ctx.waitUntil(
+			cleanupHOTPCounterStates(env)
+				.then((deleted) => {
+					if (deleted) {
+						logger.info('已清理不再使用的HOTP计数器记录', { deleted });
+					}
+				})
+				.catch((error) => logger.warn('清理HOTP计数器记录失败', { errorMessage: error.message }, error)),
+		);
+
 		try {
 			logger.info('定时备份任务开始', {
 				scheduledTime: new Date().toISOString(),
@@ -380,7 +356,7 @@ export default {
 			});
 
 			// 获取所有密钥
-			const secrets = await getAllSecrets(env);
+			const secrets = await readSecretsSnapshot(env);
 			logger.info('获取密钥完成', {
 				secretCount: secrets ? secrets.length : 0,
 			});

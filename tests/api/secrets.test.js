@@ -3,7 +3,7 @@
  * 测试密钥 CRUD 操作、备份恢复功能
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   handleGetSecrets,
   handleAddSecret,
@@ -23,7 +23,9 @@ class MockKV {
 
   async get(key, type = 'text') {
     const value = this.store.get(key);
-    if (!value) return null;
+    if (!value) {
+      return null;
+    }
 
     if (type === 'json') {
       return JSON.parse(value);
@@ -708,6 +710,25 @@ describe('API Secrets Module', () => {
       }
     });
 
+    it.each(['1.5', String(Number.MAX_SAFE_INTEGER + 1)])(
+      '应该拒绝不精确的 HOTP counter: %s',
+      async counter => {
+        const secret = 'JBSWY3DPEHPK3PXP';
+        const mockRequest = createMockRequest(
+          {},
+          'GET',
+          `https://example.com/otp/${secret}?type=HOTP&counter=${counter}&format=json`
+        );
+
+        const response = await handleGenerateOTP(secret, mockRequest);
+        const data = await response.json();
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe('OTP参数验证失败');
+        expect(data.message).toContain('安全整数');
+      }
+    );
+
     it('应该处理无 secret 的请求', async () => {
       const mockRequest = createMockRequest({}, 'GET', 'https://example.com/otp/');
       const response = await handleGenerateOTP('', mockRequest);
@@ -786,12 +807,11 @@ describe('API Secrets Module', () => {
       expect(secrets[0].secret).toBe('JBSWY3DPEHPK3PXP'); // 解密后的明文
     });
 
-    it('并发添加密钥应该正确处理', async () => {
+    it('依次添加的多个密钥都应保存', async () => {
       const env = createMockEnv();
 
-      // Note: Due to KV race conditions, concurrent adds might not work as expected
-      // In production, this would be mitigated by Cloudflare's eventual consistency
-      // For testing, we run them sequentially to verify each add works
+      // The handlers read, edit and write the whole document, so they are not atomic on
+      // their own; simultaneous changes are covered by tests/storage/secrets-store.test.js.
       await handleAddSecret(createMockRequest({ name: 'GitHub', secret: 'JBSWY3DPEHPK3PXP' }), env);
       await handleAddSecret(createMockRequest({ name: 'GitLab', secret: 'MFRGGZDFMZTWQ2LK' }), env);
       await handleAddSecret(createMockRequest({ name: 'Bitbucket', secret: 'KRSXG5CTMVRXEZLU' }), env);

@@ -26,11 +26,15 @@ export function getToolsCode() {
 
     // 入口函数
     function showQRScanAndDecode() {
+      // 预加载 jsQR（解析二维码图片需要）
+      if (typeof ensureJsQR === 'function') ensureJsQR().catch(() => {});
       hideToolsModal();
       showQRDecodeModal();
     }
 
     function showQRGenerateTool() {
+      // 预加载 qrcode-generator（生成二维码需要）
+      if (typeof ensureQRCodeGen === 'function') ensureQRCodeGen().catch(() => {});
       hideToolsModal();
       showQRGenerateModal();
     }
@@ -73,6 +77,26 @@ export function getToolsCode() {
     function showGoogleDriveTool() {
       hideToolsModal();
       showGoogleDriveModal();
+    }
+
+    // Re-render translated output without resetting input or dismissing an open form.
+    function refreshToolsTranslations() {
+      if (timestampActive) updateTimestamp(true);
+      if (_lastCheckedSecret !== null) displayCheckResult(validateSecretFormat(_lastCheckedSecret));
+      _refreshDecodeCameraTranslations();
+      _refreshWebdavTranslations();
+      _refreshS3Translations();
+      _refreshOneDriveTranslations();
+      _refreshGoogleDriveTranslations();
+      // Refresh persisted server errors in the new language while keeping form edits.
+      const destinations = [
+        ['webdavModal', loadWebdavDestinations], ['s3Modal', loadS3Destinations],
+        ['oneDriveModal', loadOneDriveDestinations], ['googleDriveModal', loadGoogleDriveDestinations]
+      ];
+      destinations.forEach(([id, reload]) => {
+        const modal = document.getElementById(id);
+        if (modal && modal.classList.contains('show')) reload(true);
+      });
     }
 
 ${getQRDecodeToolCode()}

@@ -3,7 +3,7 @@
  * 测试密码哈希、JWT 生成/验证、Cookie 处理
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { requiresAuth } from '../../src/utils/auth.js';
 
 /**
@@ -114,7 +114,7 @@ async function verifyPassword(password, storedHash) {
 
     const calculatedHashB64 = btoa(String.fromCharCode(...new Uint8Array(hashBuffer)));
     return calculatedHashB64 === hashB64;
-  } catch (error) {
+  } catch {
     return false;
   }
 }
@@ -219,7 +219,7 @@ async function verifyJWT(token, secret) {
     }
 
     return payload;
-  } catch (error) {
+  } catch {
     return null;
   }
 }
@@ -243,7 +243,9 @@ function createSetCookieHeader(token, maxAge = COOKIE_MAX_AGE) {
 
 function getTokenFromCookie(request) {
   const cookieHeader = request.headers.get('Cookie');
-  if (!cookieHeader) return null;
+  if (!cookieHeader) {
+    return null;
+  }
 
   const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
     const [name, value] = cookie.trim().split('=');
@@ -668,6 +670,10 @@ describe('JWT Authentication Utils', () => {
 
     it('刷新 token 接口不需要认证', () => {
       expect(requiresAuth('/api/refresh-token')).toBe(false);
+    });
+
+    it('时间校准接口不需要认证', () => {
+      expect(requiresAuth('/api/time')).toBe(false);
     });
 
     it('OTP 生成路径不需要认证', () => {

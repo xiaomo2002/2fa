@@ -1,3 +1,4 @@
+import { SUPPORTED_LANGUAGES, normalizeLanguage } from '../shared/languages.js';
 /**
  * OAuth utilities for cloud backup providers.
  * Handles one-time state storage/validation, provider persistence helpers, and popup callback responses.
@@ -5,6 +6,9 @@
 
 import { encryptData } from './encryption.js';
 import { createHtmlResponse } from './response.js';
+import { dialogIcon } from '../ui/dialogIcons.js';
+import { getStandaloneHead, getStandaloneI18nScript, getStandaloneLanguageSelect, getStandaloneText } from '../ui/standalone.js';
+import { getRequestLanguage, translateServerMessage } from './i18n.js';
 
 const OAUTH_STATE_PREFIX = 'oauth_state_';
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
@@ -221,7 +225,20 @@ export function extractOAuthProviderError(data, fallbackMessage, translateError)
  * @returns {Response} HTML response
  */
 export function createOAuthPopupResponse(request, payload) {
-	const { appOrigin, ...messageData } = payload || {};
+	const { appOrigin, language: requestedLanguage, messageParts, ...messageData } = payload || {};
+	const language = requestedLanguage ? normalizeLanguage(requestedLanguage) || 'en' : getRequestLanguage(request, 'en');
+	const t = (key) => getStandaloneText(language, key);
+	const originalMessages = Array.isArray(messageParts)
+		? messageParts.filter((message) => typeof message === 'string' && message)
+		: [payload.message];
+	const translateDescription = (lang) =>
+		originalMessages
+			.filter(Boolean)
+			.map((message) => translateServerMessage(message, lang))
+			.join(' ');
+	if (messageData.message) {
+		messageData.message = translateDescription(language);
+	}
 	const messagePayload = {
 		type: 'cloudBackupAuthComplete',
 		...messageData,
@@ -232,65 +249,43 @@ export function createOAuthPopupResponse(request, payload) {
 	const safeTargetOrigin = serializeForInlineScript(targetOrigin);
 	const appUrl = `${targetOrigin}/`;
 	const appearance = resolvePopupAppearance(payload);
-	const title = payload.title || appearance.title;
-	const description = payload.message || (payload.success ? '云盘授权已完成。' : '云盘授权未完成。');
+	const title = payload.title ? translateServerMessage(payload.title, language) : t(appearance.titleKey);
+	const description = messageData.message || t(payload.success ? 'oauthSuccess' : 'oauthError');
+	const translations = Object.fromEntries(
+		SUPPORTED_LANGUAGES.map((lang) => [
+			lang,
+			{
+				oauthResultTitle: payload.title ? translateServerMessage(payload.title, lang) : getStandaloneText(lang, appearance.titleKey),
+				oauthResultDescription: payload.message
+					? translateDescription(lang)
+					: getStandaloneText(lang, payload.success ? 'oauthSuccess' : 'oauthError'),
+			},
+		]),
+	);
 
 	const html = `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="${language}">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(title)}</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f6f8fb;
-      color: #1f2937;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 24px;
-      box-sizing: border-box;
-    }
-    .card {
-      max-width: 420px;
-      width: 100%;
-      background: #fff;
-      border-radius: 16px;
-      padding: 24px;
-      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
-      text-align: center;
-    }
-    .icon {
-      font-size: 40px;
-      margin-bottom: 12px;
-    }
-    h1 {
-      margin: 0 0 12px;
-      font-size: 22px;
-    }
-    p {
-      margin: 0 0 18px;
-      line-height: 1.6;
-      color: #475569;
-    }
-    a {
-      color: #2563eb;
-      text-decoration: none;
-      font-weight: 600;
-    }
-  </style>
+  ${getStandaloneHead(
+		title,
+		`
+    .oauth-result { text-align: center; }
+    .oauth-result .page-icon { justify-content: center; color: var(--page-${appearance.color}); }
+    .oauth-result .page-description { overflow-wrap: anywhere; }
+    .oauth-result .page-actions { justify-content: center; }
+  `,
+	)}
 </head>
 <body>
-  <div class="card">
-    <div class="icon">${appearance.icon}</div>
-    <h1>${escapeHtml(title)}</h1>
-    <p>${escapeHtml(description)}</p>
-    <p>如果窗口没有自动关闭，请返回应用继续操作。</p>
-    <a href="${escapeHtml(appUrl)}">返回应用</a>
-  </div>
+  <main class="standalone-card oauth-result" aria-labelledby="oauth-title">
+    <div class="standalone-language-row">${getStandaloneLanguageSelect(language)}</div>
+    <div class="page-icon">${dialogIcon(appearance.icon)}</div>
+    <h1 class="page-title" id="oauth-title" data-standalone-i18n="oauthResultTitle">${escapeHtml(title)}</h1>
+    <p class="page-description" data-standalone-i18n="oauthResultDescription">${escapeHtml(description)}</p>
+    <p class="page-notice" data-standalone-i18n="oauthReturnNotice">${t('oauthReturnNotice')}</p>
+    <div class="page-actions"><a class="page-button" href="${escapeHtml(appUrl)}" data-standalone-i18n="oauthReturn">${t('oauthReturn')}</a></div>
+  </main>
+  <script>${getStandaloneI18nScript({ language, titleKey: 'oauthResultTitle', preferServerLanguage: !!requestedLanguage, translations })}</script>
   <script>
     (function () {
       const payload = ${safeJson};
@@ -309,7 +304,9 @@ export function createOAuthPopupResponse(request, payload) {
 </body>
 </html>`;
 
-	return createHtmlResponse(html, appearance.httpStatus, request);
+	const response = createHtmlResponse(html, appearance.httpStatus, request);
+	response.headers.set('Content-Language', language);
+	return response;
 }
 
 function escapeHtml(value) {
@@ -322,21 +319,24 @@ function resolvePopupAppearance(payload) {
 	switch (severity) {
 		case 'warning':
 			return {
-				icon: '⚠️',
-				title: '授权成功，但连接测试失败',
+				icon: 'warning',
+				color: 'warning',
+				titleKey: 'oauthWarningTitle',
 				httpStatus: 200,
 			};
 		case 'error':
 			return {
-				icon: '❌',
-				title: '授权失败',
+				icon: 'error',
+				color: 'danger',
+				titleKey: 'oauthErrorTitle',
 				httpStatus: 400,
 			};
 		case 'success':
 		default:
 			return {
-				icon: '✅',
-				title: '授权成功',
+				icon: 'check',
+				color: 'success',
+				titleKey: 'oauthSuccessTitle',
 				httpStatus: 200,
 			};
 	}
@@ -365,6 +365,7 @@ function createOAuthStatePreviewPayload(payload, createdAt) {
 		provider: payload.provider || '',
 		configId: payload.configId || '',
 		appOrigin: normalizeOrigin(payload.appOrigin),
+		...(payload.language ? { language: payload.language } : {}),
 		createdAt,
 	};
 }

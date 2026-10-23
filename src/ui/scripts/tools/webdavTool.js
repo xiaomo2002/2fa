@@ -26,54 +26,73 @@ export function getWebdavToolCode() {
       hideModal('webdavModal', onClose);
     }
 
-    async function loadWebdavDestinations() {
-      const listEl = document.getElementById('webdavDestinationList');
+    let _webdavDestinationState = null;
+    let _webdavLoadVersion = 0;
+
+    async function loadWebdavDestinations(preserveForm = false) {
+      const loadVersion = ++_webdavLoadVersion;
       const addBtn = document.getElementById('webdavAddBtn');
 
       try {
         const response = await authenticatedFetch('/api/webdav/config');
         const data = await response.json();
+        if (!response.ok) throw new Error(data.message || t('toolSyncLoadRetry'));
+        if (loadVersion !== _webdavLoadVersion) return;
 
         // 渲染目标列表
-        if (data.destinations && data.destinations.length > 0) {
-          listEl.innerHTML = data.destinations.map(dest => _renderWebdavCard(dest)).join('');
-        } else {
-          listEl.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-tertiary); font-size: 13px;">暂无 WebDAV 目标，点击下方按钮添加</div>';
-        }
+        _webdavDestinationState = data;
+        _refreshWebdavTranslations();
 
         // 达到上限时隐藏添加按钮
-        addBtn.style.display = data.count >= data.maxAllowed ? 'none' : 'block';
+        addBtn.dataset.canAdd = data.count < data.maxAllowed ? 'true' : 'false';
 
         // 隐藏表单
-        hideWebdavForm();
+        if (!preserveForm) hideWebdavForm();
       } catch (error) {
+        if (loadVersion !== _webdavLoadVersion) return;
         console.error('加载 WebDAV 配置失败:', error);
-        listEl.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--danger-color); font-size: 13px;">加载失败，请稍后重试</div>';
+        _webdavDestinationState = { loadFailed: true };
+        _refreshWebdavTranslations();
       }
+    }
+
+    function _refreshWebdavTranslations() {
+      const listEl = document.getElementById('webdavDestinationList');
+      if (!listEl || !_webdavDestinationState) return;
+      if (_webdavDestinationState.loadFailed) {
+        listEl.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--danger-color); font-size: var(--dialog-caption-size);">' + t('toolSyncLoadRetry') + '</div>';
+        return;
+      }
+        if (_webdavDestinationState.destinations && _webdavDestinationState.destinations.length > 0) {
+          listEl.innerHTML = _webdavDestinationState.destinations.map(dest => _renderWebdavCard(dest)).join('');
+        } else {
+          listEl.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-tertiary); font-size: var(--dialog-caption-size);">' + t('toolSyncEmpty', { provider: 'WebDAV' }) + '</div>';
+        }
+
     }
 
     function _renderWebdavCard(dest) {
       let statusDot = 'dest-status-dot-gray';
-      let statusText = '未推送';
+      let statusText = t('toolSyncNotPushed');
 
       if (dest.status.lastError) {
         statusDot = 'dest-status-dot-red';
-        statusText = '失败: ' + dest.status.lastError.error;
+        statusText = t('toolSyncError', { message: dest.status.lastError.error });
       } else if (dest.status.lastSuccess) {
         statusDot = 'dest-status-dot-green';
-        statusText = new Date(dest.status.lastSuccess.timestamp).toLocaleString();
+        statusText = formatI18nDate(dest.status.lastSuccess.timestamp);
       }
 
       const enabledClass = dest.enabled ? '' : 'dest-card-disabled';
 
-      return '<div class="dest-card ' + enabledClass + '" data-id="' + dest.id + '">'
+      return '<div class="dest-card ' + enabledClass + '" data-id="' + _escapeHtml(dest.id) + '">'
         + '<div class="dest-card-header">'
         + '<div class="dest-card-info">'
         + '<span class="dest-card-name">' + _escapeHtml(dest.name) + '</span>'
         + '<span class="dest-card-url">' + _escapeHtml(dest.config.url) + '</span>'
         + '</div>'
         + '<label class="dest-toggle" onclick="event.stopPropagation()">'
-        + '<input type="checkbox" ' + (dest.enabled ? 'checked' : '') + ' onchange="toggleWebdavDest(\\'' + dest.id + '\\', this.checked)" />'
+        + '<input type="checkbox" aria-label="' + t('toolSyncEnabledLabel') + '" ' + (dest.enabled ? 'checked' : '') + ' onchange="toggleWebdavDest(this.closest(\\'.dest-card\\').dataset.id, this.checked)" />'
         + '<span class="dest-toggle-slider"></span>'
         + '</label>'
         + '</div>'
@@ -82,8 +101,8 @@ export function getWebdavToolCode() {
         + '<span class="dest-status-text">' + _escapeHtml(statusText) + '</span>'
         + '</div>'
         + '<div class="dest-card-actions">'
-        + '<button class="btn btn-sm" onclick="event.stopPropagation(); editWebdavDest(\\'' + dest.id + '\\')" style="font-size: 12px; padding: 4px 12px;">编辑</button>'
-        + '<button class="btn btn-sm btn-danger-outline" onclick="event.stopPropagation(); deleteWebdavDest(\\'' + dest.id + '\\', \\'' + _escapeHtml(dest.name).replace(/'/g, "\\\\'") + '\\')" style="font-size: 12px; padding: 4px 12px;">删除</button>'
+        + '<button class="btn btn-sm" onclick="event.stopPropagation(); editWebdavDest(this.closest(\\'.dest-card\\').dataset.id)" >' + t('edit') + '</button>'
+        + '<button class="btn btn-sm btn-danger-outline" onclick="event.stopPropagation(); deleteWebdavDest(this.closest(\\'.dest-card\\').dataset.id, this.closest(\\'.dest-card\\').querySelector(\\'.dest-card-name\\').textContent)" >' + t('delete') + '</button>'
         + '</div>'
         + '</div>';
     }
@@ -91,7 +110,7 @@ export function getWebdavToolCode() {
     function _escapeHtml(str) {
       const div = document.createElement('div');
       div.textContent = str;
-      return div.innerHTML;
+      return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function showWebdavForm(id) {
@@ -107,13 +126,18 @@ export function getWebdavToolCode() {
         document.getElementById('webdavUrl').value = '';
         document.getElementById('webdavUsername').value = '';
         document.getElementById('webdavPassword').value = '';
-        document.getElementById('webdavPassword').placeholder = '请输入密码';
+        document.getElementById('webdavPassword').dataset.i18nPlaceholder = 'toolSyncPassword';
+        document.getElementById('webdavPassword').placeholder = t('toolSyncPassword');
         document.getElementById('webdavPath').value = '/';
       }
+      if (typeof markModalSaved === 'function') markModalSaved('webdavModal');
     }
 
     function hideWebdavForm() {
       document.getElementById('webdavFormArea').style.display = 'none';
+      const addBtn = document.getElementById('webdavAddBtn');
+      addBtn.style.display = addBtn.dataset.canAdd === 'false' ? 'none' : 'block';
+      if (typeof markModalSaved === 'function') markModalSaved('webdavModal');
     }
 
     async function editWebdavDest(id) {
@@ -128,12 +152,13 @@ export function getWebdavToolCode() {
         document.getElementById('webdavUrl').value = dest.config.url;
         document.getElementById('webdavUsername').value = dest.config.username;
         document.getElementById('webdavPassword').value = '';
-        document.getElementById('webdavPassword').placeholder = dest.config.hasPassword ? '已保存（留空保持不变）' : '请输入密码';
+        document.getElementById('webdavPassword').dataset.i18nPlaceholder = dest.config.hasPassword ? 'toolSyncSavedSecret' : 'toolSyncPassword';
+        document.getElementById('webdavPassword').placeholder = dest.config.hasPassword ? t('toolSyncSavedSecret') : t('toolSyncPassword');
         document.getElementById('webdavPath').value = dest.config.path || '/';
 
         showWebdavForm(id);
       } catch (error) {
-        showCenterToast('❌', '加载配置失败: ' + error.message);
+        showCenterToast('❌', t('toolSyncLoadError', { message: error.message }));
       }
     }
 
@@ -146,13 +171,15 @@ export function getWebdavToolCode() {
       const path = document.getElementById('webdavPath').value.trim() || '/';
 
       if (!name || !url || !username) {
-        showCenterToast('⚠️', '请填写目标名称、服务器地址和用户名');
+        showCenterToast('⚠️', t('toolSyncWebdavRequired'));
         return;
       }
 
       const saveBtn = document.getElementById('webdavSaveBtn');
       const originalText = saveBtn.textContent;
-      saveBtn.textContent = '保存中...';
+      const originalI18nKey = saveBtn.dataset.i18n;
+      saveBtn.dataset.i18n = 'saving';
+      saveBtn.textContent = t('saving');
       saveBtn.disabled = true;
 
       try {
@@ -170,16 +197,18 @@ export function getWebdavToolCode() {
           if (data.warning) {
             showCenterToast('⚠️', data.warning);
           } else {
-            showCenterToast('✅', 'WebDAV 配置已保存');
+            showCenterToast('✅', t('toolSyncSaved', { provider: 'WebDAV' }));
           }
           loadWebdavDestinations();
         } else {
-          showCenterToast('❌', data.message || '保存失败');
+          showCenterToast('❌', data.message || t('toolSyncSaveFailed'));
         }
       } catch (error) {
-        showCenterToast('❌', '保存失败: ' + error.message);
+        showCenterToast('❌', t('toolSyncSaveError', { message: error.message }));
       } finally {
-        saveBtn.textContent = originalText;
+        if (originalI18nKey) saveBtn.dataset.i18n = originalI18nKey;
+        else delete saveBtn.dataset.i18n;
+        saveBtn.textContent = originalI18nKey ? t(originalI18nKey) : originalText;
         saveBtn.disabled = false;
       }
     }
@@ -193,13 +222,15 @@ export function getWebdavToolCode() {
       const path = document.getElementById('webdavPath').value.trim() || '/';
 
       if (!name || !url || !username) {
-        showCenterToast('⚠️', '请填写目标名称、服务器地址和用户名');
+        showCenterToast('⚠️', t('toolSyncWebdavRequired'));
         return;
       }
 
       const testBtn = document.getElementById('webdavTestBtn');
       const originalText = testBtn.textContent;
-      testBtn.textContent = '测试中...';
+      const originalI18nKey = testBtn.dataset.i18n;
+      testBtn.dataset.i18n = 'toolSyncTesting';
+      testBtn.textContent = t('toolSyncTesting');
       testBtn.disabled = true;
 
       try {
@@ -214,24 +245,27 @@ export function getWebdavToolCode() {
         const data = await response.json();
 
         if (data.success) {
-          showCenterToast('✅', data.message || '连接成功');
+          showCenterToast('✅', data.message || t('toolSyncConnected'));
         } else {
-          showCenterToast('❌', data.message || '连接失败');
+          showCenterToast('❌', data.message || t('toolSyncConnectFailed'));
         }
       } catch (error) {
-        showCenterToast('❌', '测试失败: ' + error.message);
+        showCenterToast('❌', t('toolSyncTestError', { message: error.message }));
       } finally {
-        testBtn.textContent = originalText;
+        if (originalI18nKey) testBtn.dataset.i18n = originalI18nKey;
+        else delete testBtn.dataset.i18n;
+        testBtn.textContent = originalI18nKey ? t(originalI18nKey) : originalText;
         testBtn.disabled = false;
       }
     }
 
     async function deleteWebdavDest(id, name) {
       const confirmed = await showConfirmDialog({
-        title: '删除 WebDAV 目标',
-        message: '确定要删除 WebDAV 目标「' + name + '」吗？\\n删除后该目标将不再接收备份推送。',
-        confirmText: '删除',
-        cancelText: '取消',
+        i18n: { title: 'toolSyncDeleteTitle', message: 'toolSyncDeleteConfirm', confirmText: 'delete', cancelText: 'cancel', params: { provider: 'WebDAV', name } },
+        title: t('toolSyncDeleteTitle', { provider: 'WebDAV' }),
+        message: t('toolSyncDeleteConfirm', { provider: 'WebDAV', name }),
+        confirmText: t('delete'),
+        cancelText: t('cancel'),
         danger: true
       });
       if (!confirmed) {
@@ -245,13 +279,13 @@ export function getWebdavToolCode() {
         const data = await response.json();
 
         if (data.success) {
-          showCenterToast('✅', 'WebDAV 目标已删除');
+          showCenterToast('✅', t('toolSyncDeleted', { provider: 'WebDAV' }));
           loadWebdavDestinations();
         } else {
-          showCenterToast('❌', data.message || '删除失败');
+          showCenterToast('❌', data.message || t('toolSyncDeleteFailed'));
         }
       } catch (error) {
-        showCenterToast('❌', '删除失败: ' + error.message);
+        showCenterToast('❌', t('toolSyncDeleteError', { message: error.message }));
       }
     }
 
@@ -268,11 +302,11 @@ export function getWebdavToolCode() {
           showCenterToast('✅', data.message);
           loadWebdavDestinations();
         } else {
-          showCenterToast('❌', data.message || '操作失败');
+          showCenterToast('❌', data.message || t('toolSyncOperationFailed'));
           loadWebdavDestinations();
         }
       } catch (error) {
-        showCenterToast('❌', '操作失败: ' + error.message);
+        showCenterToast('❌', t('toolSyncOperationError', { message: error.message }));
         loadWebdavDestinations();
       }
     }

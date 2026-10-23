@@ -1,3 +1,4 @@
+import { getRequestLanguage } from '../utils/i18n.js';
 /**
  * OneDrive configuration and OAuth API endpoints.
  */
@@ -22,7 +23,13 @@ import {
 	getOAuthRedirectBase,
 } from '../utils/oauth.js';
 import { getLogger } from '../utils/logger.js';
-import { checkRateLimit, getClientIdentifier, createRateLimitResponse, RATE_LIMIT_PRESETS } from '../utils/rateLimit.js';
+import {
+	checkRateLimit,
+	scopedRateLimitKey,
+	getClientIdentifier,
+	createRateLimitResponse,
+	RATE_LIMIT_PRESETS,
+} from '../utils/rateLimit.js';
 import { createJsonResponse, createErrorResponse } from '../utils/response.js';
 import { validateRequest, cloudDriveConfigSchema, destinationIdSchema, toggleDestinationSchema } from '../utils/validation.js';
 
@@ -223,6 +230,7 @@ export async function handleStartOneDriveOAuth(request, env) {
 			provider: 'onedrive',
 			configId: body.id,
 			appOrigin: new URL(request.url).origin,
+			language: getRequestLanguage(request),
 		});
 		const authorizeUrl = buildOneDriveAuthorizeUrl(env, { redirectUri, state });
 
@@ -261,6 +269,7 @@ export async function handleOneDriveOAuthCallback(request, env) {
 				provider: 'onedrive',
 				id: configId,
 				appOrigin: oauthState.appOrigin,
+				language: oauthState.language,
 				message: errorDescription || errorCode,
 			});
 		}
@@ -281,6 +290,7 @@ export async function handleOneDriveOAuthCallback(request, env) {
 		const profile = await fetchOneDriveProfile(tokenData.accessToken);
 		const result = await completeOneDriveAuthorization(env, { id: configId, tokenData, profile });
 		const testResult = await testOneDriveConnectionById(env, configId);
+		const messageParts = [testResult.message, result.warning].filter(Boolean);
 
 		if (!testResult.success) {
 			return createOAuthPopupResponse(request, {
@@ -289,7 +299,9 @@ export async function handleOneDriveOAuthCallback(request, env) {
 				provider: 'onedrive',
 				id: configId,
 				appOrigin: oauthState.appOrigin,
-				message: result.warning ? `${testResult.message} ${result.warning}` : testResult.message,
+				language: oauthState.language,
+				message: messageParts.join(' '),
+				messageParts,
 			});
 		}
 
@@ -299,7 +311,9 @@ export async function handleOneDriveOAuthCallback(request, env) {
 			provider: 'onedrive',
 			id: configId,
 			appOrigin: oauthState.appOrigin,
-			message: result.warning ? `${testResult.message} ${result.warning}` : testResult.message,
+			language: oauthState.language,
+			message: messageParts.join(' '),
+			messageParts,
 		});
 	} catch (error) {
 		logger.error('处理 OneDrive OAuth 回调失败', { error: error.message }, error);
@@ -308,6 +322,7 @@ export async function handleOneDriveOAuthCallback(request, env) {
 			provider: 'onedrive',
 			id: configId || undefined,
 			appOrigin: oauthState?.appOrigin || statePreview?.appOrigin,
+			language: oauthState?.language || statePreview?.language,
 			message: error.message || 'OneDrive 授权失败',
 		});
 	}
@@ -315,7 +330,7 @@ export async function handleOneDriveOAuthCallback(request, env) {
 
 async function checkSensitiveRateLimit(request, env) {
 	const clientIP = getClientIdentifier(request, 'ip');
-	const rateLimitInfo = await checkRateLimit(clientIP, env, RATE_LIMIT_PRESETS.sensitive);
+	const rateLimitInfo = await checkRateLimit(scopedRateLimitKey('onedrive', clientIP), env, RATE_LIMIT_PRESETS.sensitive);
 	if (!rateLimitInfo.allowed) {
 		return createRateLimitResponse(rateLimitInfo, request);
 	}

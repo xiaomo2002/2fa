@@ -3,10 +3,6 @@ main = "src/worker.js"
 compatibility_date = "2024-01-13"
 workers_dev = false
 
-[[routes]]
-pattern = "2fa.admin1.top"
-custom_domain = true
-
 # KV 命名空间
 # 始终声明 SECRETS_KV，避免 Git 自动构建部署时丢失绑定。
 # 新版 Wrangler 会在首次部署时自动创建或保持已链接的 KV 资源。
@@ -14,6 +10,13 @@ custom_domain = true
 [[kv_namespaces]]
 binding = "SECRETS_KV"
 id = "9c132da9c8034ffba0f6ece9aaf5c76c"
+[[durable_objects.bindings]]
+name = "SECRETS_STORE"
+class_name = "SecretsStore"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SecretsStore"]
 
 # 环境变量 (Secrets)
 # 注意：敏感信息使用 Cloudflare Secrets 安全存储
@@ -50,16 +53,16 @@ crons = ["0 16 * * *"]
 [vars]
 SW_VERSION = "v1"
 ENVIRONMENT = "production"
-
-# ====================================
-# 开发/测试环境配置
-# ====================================
 [env.development]
 name = "2fa-dev"
 
 # 绑定项不可继承，开发环境也需要显式声明。
 [[env.development.kv_namespaces]]
 binding = "SECRETS_KV"
+
+[[env.development.durable_objects.bindings]]
+name = "SECRETS_STORE"
+class_name = "SecretsStore"
 
 [env.development.vars]
 ENVIRONMENT = "development"

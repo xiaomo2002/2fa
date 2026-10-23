@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { readFileSync, writeFileSync } from 'fs';
+import process from 'node:process';
+import { preserveWorkflowsForSync } from './sync-upstream-compat.js';
 
 const [, , localPath, upstreamPath, outputPath] = process.argv;
 
@@ -8,6 +10,13 @@ if (!localPath || !upstreamPath || !outputPath) {
 	console.error('Usage: node scripts/merge-wrangler-config.js <local> <upstream> <output>');
 	process.exit(1);
 }
+
+// Existing workflows execute this downloaded entry point after rsync. Repair any
+// skipped upstream files before reading wrangler.toml, then merge local settings.
+preserveWorkflowsForSync({ localPath, upstreamPath, outputPath });
+
+// Imported only now, after the skipped upstream files above have been repaired.
+const { mergeMigrations, tableHeaderLines, tableHeaders, tomlAssignments } = await import('./merge-migrations.js');
 
 const local = normalize(readFileSync(localPath, 'utf8'));
 const upstream = normalize(readFileSync(upstreamPath, 'utf8'));
@@ -31,11 +40,19 @@ merged = mergeVarsSection(merged, local, '[vars]', ['SW_VERSION']);
 
 // Preserve environment-specific names and vars.
 merged = preserveSectionLineAssignment(merged, local, '[env.development]', 'name');
+// 保留本地维护者在 dev 块内显式声明的 routes（典型用法：routes = [] 防止继承顶层自定义域名，
+// 避免 deploy:dev 抢占生产域名）。注意：当前实现只支持单行赋值（含 routes = []）。
+merged = preserveSectionLineAssignment(merged, local, '[env.development]', 'routes');
 merged = mergeVarsSection(merged, local, '[env.development.vars]', ['SW_VERSION']);
 
 // Merge KV bindings, preserving existing IDs while adopting upstream structure.
 merged = mergeTableArrayBlock(merged, local, '[[kv_namespaces]]', 'SECRETS_KV');
 merged = mergeTableArrayBlock(merged, local, '[[env.development.kv_namespaces]]', 'SECRETS_KV');
+
+// Keep the deployment's migration history. Rolling back below 1.11.0 and
+// upgrading again add migrations (docs/DEPLOYMENT.md); without them Wrangler
+// replays every migration and the deploy fails.
+merged = mergeMigrations(merged, local);
 
 writeFileSync(outputPath, merged, 'utf8');
 
@@ -43,18 +60,33 @@ function normalize(text) {
 	return text.replace(/\r\n/g, '\n');
 }
 
+// Top-level keys are read and written only above the first table header: the
+// same key under [env.development] (for example its routes) belongs to that
+// environment and must not reach the production Worker.
+function splitTopLevel(text) {
+	const lines = text.split('\n');
+	const headers = tableHeaderLines(text);
+	const end = lines.findIndex((_line, index) => headers.has(index));
+	if (end === -1) {
+		return { top: text, rest: '' };
+	}
+	const top = lines.slice(0, end).join('\n');
+	return { top, rest: text.slice(top.length) };
+}
+
 function preserveLineAssignment(targetText, sourceText, key) {
-	const sourceLine = extractLineAssignment(sourceText, key);
-	if (!sourceLine) {
+	const source = findAssignment(splitTopLevel(sourceText).top, key);
+	if (!source) {
 		return targetText;
 	}
 
-	const targetPattern = new RegExp(`^${escapeRegex(key)}\\s*=.*$`, 'm');
-	if (targetPattern.test(targetText)) {
-		return targetText.replace(targetPattern, sourceLine);
+	const { top, rest } = splitTopLevel(targetText);
+	const target = findAssignment(top, key);
+	if (target) {
+		return replaceRange(top, target, source.text) + rest;
 	}
 
-	return insertAfterLine(targetText, sourceLine, /^(workers_dev\s*=.*|compatibility_date\s*=.*)$/m);
+	return insertAfterAssignment(top, source.text, ['workers_dev', 'compatibility_date']) + rest;
 }
 
 function preserveSectionLineAssignment(targetText, sourceText, header, key) {
@@ -65,31 +97,33 @@ function preserveSectionLineAssignment(targetText, sourceText, header, key) {
 		return targetText;
 	}
 
-	const sourceLine = extractLineAssignment(sourceSection.body, key);
-	if (!sourceLine) {
+	const source = findAssignment(sourceSection.body, key);
+	if (!source || (key === 'routes' && source.text.includes('\n'))) {
 		return targetText;
 	}
 
-	const updatedBody = replaceOrAppendLine(targetSection.body, key, sourceLine);
-	return replaceBlock(targetText, targetSection.fullText, buildSection(header, updatedBody));
+	const target = findAssignment(targetSection.body, key);
+	const updatedBody = target ? replaceRange(targetSection.body, target, source.text) : targetSection.body.trimEnd() + '\n' + source.text;
+	return replaceRange(targetText, targetSection, buildSection(targetSection.header, updatedBody));
 }
 
 function preserveArrayAssignment(targetText, sourceText, key, insertAfterKey = null) {
-	const sourceBlock = extractArrayAssignment(sourceText, key);
-	if (!sourceBlock) {
+	const source = findAssignment(splitTopLevel(sourceText).top, key);
+	if (!source || !source.valueCode.trimStart().startsWith('[')) {
 		return targetText;
 	}
 
-	const targetBlock = extractArrayAssignment(targetText, key);
-	if (targetBlock) {
-		return replaceBlock(targetText, targetBlock, sourceBlock);
+	const { top, rest } = splitTopLevel(targetText);
+	const target = findAssignment(top, key);
+	if (target) {
+		return replaceRange(top, target, source.text) + rest;
 	}
 
 	if (insertAfterKey) {
-		return insertAfterLine(targetText, sourceBlock, new RegExp(`^${escapeRegex(insertAfterKey)}\\s*=.*$`, 'm'));
+		return insertAfterAssignment(top, source.text, [insertAfterKey]) + rest;
 	}
 
-	return targetText + '\n' + sourceBlock + '\n';
+	return top + '\n' + source.text + '\n' + rest;
 }
 
 function preserveSectionBlock(targetText, sourceText, header) {
@@ -100,7 +134,7 @@ function preserveSectionBlock(targetText, sourceText, header) {
 		return targetText;
 	}
 
-	return replaceBlock(targetText, targetSection.fullText, sourceSection.fullText);
+	return replaceRange(targetText, targetSection, sourceSection.fullText);
 }
 
 function mergeVarsSection(targetText, sourceText, header, protectedKeys = []) {
@@ -113,19 +147,20 @@ function mergeVarsSection(targetText, sourceText, header, protectedKeys = []) {
 
 	const sourceVars = parseAssignments(sourceSection.body);
 	const targetVars = parseAssignments(targetSection.body);
+	const protectedPaths = new Set(protectedKeys.map(assignmentKey));
 
 	for (const [key, value] of sourceVars.entries()) {
-		if (protectedKeys.includes(key)) {
+		if (protectedPaths.has(key)) {
 			continue;
 		}
 		targetVars.set(key, value);
 	}
 
-	const updatedBody = Array.from(targetVars.entries())
-		.map(([key, value]) => `${key} = ${value}`)
+	const updatedBody = Array.from(targetVars.values())
+		.map((entry) => entry.text)
 		.join('\n');
 
-	return replaceBlock(targetText, targetSection.fullText, buildSection(header, updatedBody));
+	return replaceRange(targetText, targetSection, buildSection(targetSection.header, updatedBody));
 }
 
 function mergeTableArrayBlock(targetText, sourceText, header, bindingName) {
@@ -143,8 +178,9 @@ function mergeTableArrayBlock(targetText, sourceText, header, bindingName) {
 	const sourceAssignments = parseAssignments(sourceBlock.body);
 
 	for (const key of ['id', 'preview_id']) {
-		if (sourceAssignments.has(key)) {
-			targetAssignments.set(key, sourceAssignments.get(key));
+		const path = assignmentKey(key);
+		if (sourceAssignments.has(path)) {
+			targetAssignments.set(path, sourceAssignments.get(path));
 		}
 	}
 
@@ -154,48 +190,34 @@ function mergeTableArrayBlock(targetText, sourceText, header, bindingName) {
 		}
 	}
 
-	const orderedKeys = ['binding', 'id', 'preview_id'];
+	const orderedKeys = ['binding', 'id', 'preview_id'].map(assignmentKey);
 	const lines = [];
 
 	for (const key of orderedKeys) {
 		if (targetAssignments.has(key)) {
-			lines.push(`${key} = ${targetAssignments.get(key)}`);
+			lines.push(targetAssignments.get(key).text);
 		}
 	}
 
 	for (const [key, value] of targetAssignments.entries()) {
 		if (!orderedKeys.includes(key)) {
-			lines.push(`${key} = ${value}`);
+			lines.push(value.text);
 		}
 	}
 
-	return replaceBlock(targetText, targetBlock.fullText, [header, ...lines].join('\n'));
+	return replaceRange(targetText, targetBlock, [targetBlock.header, ...lines].join('\n'));
 }
 
-function extractLineAssignment(text, key) {
-	const match = text.match(new RegExp(`^${escapeRegex(key)}\\s*=.*$`, 'm'));
-	return match ? match[0] : null;
+function assignmentKey(key) {
+	return JSON.stringify(Array.isArray(key) ? key : [key]);
 }
 
-function replaceOrAppendLine(body, key, newLine) {
-	const pattern = new RegExp(`^${escapeRegex(key)}\\s*=.*$`, 'm');
-	if (pattern.test(body)) {
-		return body.replace(pattern, newLine);
-	}
-	return body.trimEnd() + '\n' + newLine;
+function findAssignment(text, key) {
+	return parseAssignments(text).get(assignmentKey(key));
 }
 
 function parseAssignments(body) {
-	const assignments = new Map();
-	for (const line of body.split('\n')) {
-		const trimmed = line.trim();
-		if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) {
-			continue;
-		}
-		const [key, ...rest] = trimmed.split('=');
-		assignments.set(key.trim(), rest.join('=').trim());
-	}
-	return assignments;
+	return new Map(tomlAssignments(body).map((entry) => [assignmentKey(entry.path), entry]));
 }
 
 function extractSectionBlock(text, header) {
@@ -203,18 +225,31 @@ function extractSectionBlock(text, header) {
 }
 
 function extractTableArrayBlock(text, header, bindingName) {
-	return extractHeaderBlock(text, header, true, (body) => body.includes(`binding = "${bindingName}"`));
+	return extractHeaderBlock(text, header, true, (body) => {
+		const value = findAssignment(body, 'binding')?.valueCode.trim();
+		if (/^'[^']*'$/.test(value)) {
+			return value.slice(1, -1) === bindingName;
+		}
+		try {
+			return JSON.parse(value) === bindingName;
+		} catch {
+			return false;
+		}
+	});
 }
 
 function extractHeaderBlock(text, header, isArray, predicate = null) {
 	const lines = text.split('\n');
+	const headers = tableHeaders(text);
+	const expected = tableHeaders(header).get(0);
 	for (let start = 0; start < lines.length; start++) {
-		if (lines[start].trim() !== header) {
+		const actual = headers.get(start);
+		if (!actual || actual.array !== isArray || JSON.stringify(actual.path) !== JSON.stringify(expected.path)) {
 			continue;
 		}
 
 		let end = start + 1;
-		while (end < lines.length && !startsNewTomlBlock(lines[end])) {
+		while (end < lines.length && !headers.has(end)) {
 			end++;
 		}
 
@@ -225,10 +260,14 @@ function extractHeaderBlock(text, header, isArray, predicate = null) {
 			continue;
 		}
 
+		const fullText = fullLines.join('\n').trimEnd();
+		const startOffset = lines.slice(0, start).reduce((offset, line) => offset + line.length + 1, 0);
 		return {
-			header,
+			header: lines[start],
 			body,
-			fullText: fullLines.join('\n').trimEnd(),
+			fullText,
+			startOffset,
+			endOffset: startOffset + fullText.length,
 			isArray,
 		};
 	}
@@ -236,51 +275,22 @@ function extractHeaderBlock(text, header, isArray, predicate = null) {
 	return null;
 }
 
-function extractArrayAssignment(text, key) {
-	const lines = text.split('\n');
-	for (let i = 0; i < lines.length; i++) {
-		if (!lines[i].trim().startsWith(`${key} = [`)) {
-			continue;
-		}
-
-		let bracketBalance = countChar(lines[i], '[') - countChar(lines[i], ']');
-		let end = i + 1;
-		while (end < lines.length && bracketBalance > 0) {
-			bracketBalance += countChar(lines[end], '[') - countChar(lines[end], ']');
-			end++;
-		}
-		return lines.slice(i, end).join('\n');
-	}
-	return null;
-}
-
-function countChar(text, char) {
-	return [...text].filter((current) => current === char).length;
-}
-
 function buildSection(header, body) {
 	return `${header}\n${body.trimEnd()}`;
 }
 
-function replaceBlock(text, existingBlock, replacementBlock) {
-	return text.replace(existingBlock, replacementBlock);
+function replaceRange(text, block, replacement) {
+	// Identical assignment/table text can appear inside a multi-line string.
+	// Replace only the actual range found by the scanner.
+	return text.slice(0, block.startOffset) + replacement + text.slice(block.endOffset);
 }
 
-function insertAfterLine(text, block, pattern) {
-	const match = text.match(pattern);
-	if (!match || match.index === undefined) {
+function insertAfterAssignment(text, block, keys) {
+	const anchor = tomlAssignments(text).find((entry) => entry.path.length === 1 && keys.includes(entry.path[0]));
+	if (!anchor) {
 		return text + '\n' + block + '\n';
 	}
 
-	const insertionPoint = match.index + match[0].length;
+	const insertionPoint = anchor.endOffset;
 	return text.slice(0, insertionPoint) + '\n' + block + text.slice(insertionPoint);
-}
-
-function startsNewTomlBlock(line) {
-	const trimmed = line.trim();
-	return trimmed.startsWith('[') && trimmed.endsWith(']');
-}
-
-function escapeRegex(value) {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

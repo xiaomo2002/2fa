@@ -143,6 +143,18 @@ export function getBaseStyles() {
       text-align: left;
     }
 
+    .search-stats:empty {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
     /* 平板和中等屏幕优化 */
     @media (min-width: 481px) and (max-width: 768px) {
       .search-action-row {
@@ -241,13 +253,92 @@ export function getBaseStyles() {
       position: absolute;
       top: calc(100% + 6px);
       right: 0;
-      min-width: 200px;
+      min-width: 232px;
       background: var(--menu-bg, var(--card-bg));
       border: 1px solid var(--menu-border, var(--border-primary));
       border-radius: 10px;
       box-shadow: var(--menu-shadow, 0 8px 24px rgba(0,0,0,0.15));
       padding: 6px;
       z-index: 1002;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      /* JS narrows this to the actual space above or below the trigger. */
+      max-height: calc(100vh - 12px);
+      max-height: calc(100dvh - 12px);
+      overflow-y: auto;
+    }
+
+    .sort-menu.opens-upward {
+      top: auto;
+      bottom: calc(100% + 6px);
+    }
+
+    .sort-menu-section {
+      min-width: 0;
+    }
+
+    .sort-menu-label {
+      padding: 6px 8px 5px;
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.2;
+    }
+
+    .view-mode-segmented {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 3px;
+      padding: 3px;
+      border: 1px solid var(--border-primary);
+      border-radius: var(--radius-sm);
+      background: var(--bg-secondary);
+    }
+
+    .view-mode-option,
+    .group-sort-option {
+      min-width: 0;
+      min-height: 36px;
+      padding: 7px 8px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--segmented-option-text, var(--text-secondary));
+      font: inherit;
+      font-size: 13px;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .view-mode-option:hover,
+    .group-sort-option:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .view-mode-option.active,
+    .group-sort-option.active {
+      background: var(--card-bg);
+      color: var(--text-primary);
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+    }
+
+    .view-mode-option:focus-visible,
+    .group-sort-option:focus-visible,
+    .sort-option:focus-visible {
+      outline: 2px solid var(--border-focus);
+      outline-offset: 1px;
+    }
+
+    .sort-menu-divider {
+      height: 1px;
+      margin: 6px 2px 3px;
+      background: var(--border-primary);
+    }
+
+    .sort-options {
       display: flex;
       flex-direction: column;
       gap: 2px;
@@ -295,6 +386,11 @@ export function getBaseStyles() {
         height: 44px;
         justify-content: center;
       }
+
+      .view-mode-option,
+      .group-sort-option {
+        min-height: 44px;
+      }
     }
 
     /* 独立的操作菜单容器 - 固定在右下角，兼容 iOS safe area */
@@ -305,6 +401,12 @@ export function getBaseStyles() {
       z-index: 1001;
     }
 
+    /* 拖拽中：禁用过渡，避免位置跟手时出现回弹 */
+    .action-menu-float.dragging,
+    .action-menu-float.dragging .main-action-button {
+      transition: none !important;
+    }
+
     .main-action-button {
       background: #8e44ad;
       color: white;
@@ -313,7 +415,7 @@ export function getBaseStyles() {
       height: 48px;
       border-radius: 50%;
       font-size: 20px;
-      cursor: pointer;
+      cursor: grab;
       transition: all 0.3s ease;
       display: flex;
       align-items: center;
@@ -326,6 +428,47 @@ export function getBaseStyles() {
       -ms-user-select: none;
       user-select: none;
       outline: none;
+      touch-action: none;
+      animation: fab-breath 4s ease-in-out infinite;
+    }
+
+    /* 轻微的呼吸灯效果：紫色光晕缓慢明暗 */
+    @keyframes fab-breath {
+      0%, 100% {
+        box-shadow:
+          var(--action-btn-shadow),
+          0 0 0 0 rgba(142, 68, 173, 0);
+      }
+      50% {
+        box-shadow:
+          var(--action-btn-shadow),
+          0 0 14px 3px rgba(142, 68, 173, 0.85);
+      }
+    }
+
+    /* 激活 / 拖拽时暂停呼吸，避免与其他状态视觉冲突 */
+    .main-action-button.active,
+    .action-menu-float.dragging .main-action-button {
+      animation: none;
+    }
+
+    /* 悬停暂停仅在支持 hover 的设备启用：
+       触摸设备点按后 :hover 会粘滞在按钮上，若不加保护呼吸灯将一直停到用户点击别处 */
+    @media (hover: hover) {
+      .main-action-button:hover {
+        animation: none;
+      }
+    }
+
+    /* 尊重系统的"减弱动效"无障碍偏好 */
+    @media (prefers-reduced-motion: reduce) {
+      .main-action-button {
+        animation: none;
+      }
+    }
+
+    .action-menu-float.dragging .main-action-button {
+      cursor: grabbing;
     }
 
     .main-action-button:hover {

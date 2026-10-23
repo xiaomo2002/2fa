@@ -17,7 +17,7 @@ export function getPreviewImportCode() {
     function previewImport() {
       const text = document.getElementById('importText').value.trim();
       if (!text) {
-        showCenterToast('❌', '请先输入或选择要导入的内容');
+        showCenterToast('❌', t('transferImportRequired'));
         return;
       }
 
@@ -27,6 +27,7 @@ export function getPreviewImportCode() {
       const executeBtn = document.getElementById('executeImportBtn');
 
       previewList.innerHTML = '';
+      importPreviewRenderers = [];
       importPreviewData = [];
       resetImportRetryState();
       // 新一轮预览必须把上一轮残留的进度条/累计成功失败计数也一起清掉，
@@ -49,13 +50,11 @@ export function getPreviewImportCode() {
 
           const issuer = meta.issuerExt || meta.issuerInt || '';
           const account = meta.label || '';
-          let displayInfo = issuer || '未知服务';
-          if (meta.type && meta.type !== 'TOTP') displayInfo += ' [' + meta.type + ']';
-          if (meta.digits && meta.digits !== 6) displayInfo += ' [' + meta.digits + '位]';
+          const displayInfo = () => formatImportPreviewName(issuer, meta.type, meta.digits);
 
-          item.innerHTML =
-            '<div class="service-name">🔒 ' + displayInfo + '</div>' +
-            '<div class="account-name">' + (account || '(需要密码解密)') + '</div>';
+          setImportPreviewRenderer(item, () =>
+            '<div class="service-name">' + dialogIcon('lock') + ' ' + escapeHTML(displayInfo()) + '</div>' +
+            '<div class="account-name">' + escapeHTML(account || t('transferNeedsPassword')) + '</div>');
 
           previewList.appendChild(item);
 
@@ -70,21 +69,21 @@ export function getPreviewImportCode() {
         });
 
         const statsDiv = document.createElement('div');
-        statsDiv.style.cssText = 'margin: 15px 0; padding: 15px; background: var(--bg-secondary); border-radius: 6px; font-size: 14px; color: var(--text-primary);';
+        statsDiv.className = 'dialog-encrypted-import';
         statsDiv.innerHTML =
-          '<strong>🔐 FreeOTP 加密备份</strong><br>' +
-          '<span style="color: var(--text-secondary);">检测到 ' + tokenCount + ' 个加密密钥</span><br><br>' +
-          '<div style="display: flex; gap: 10px; align-items: center;">' +
-          '<input type="password" id="freeotpPassword" placeholder="输入备份密码" ' +
-          'style="flex: 1; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">' +
-          '<button onclick="decryptAndPreviewFreeOTP()" class="btn btn-primary" style="padding: 8px 16px;">解密</button>' +
+          '<strong data-i18n="transferFreeOTPEncrypted">' + escapeHTML(t('transferFreeOTPEncrypted')) + '</strong>' +
+          '<p>' + escapeHTML(t('transferDetectedPrefix')) + tokenCount + escapeHTML(t('transferEncryptedKeysSuffix')) + '</p>' +
+          '<div class="dialog-decrypt-controls">' +
+          '<input type="password" id="freeotpPassword" data-i18n-placeholder="transferBackupPasswordPlaceholder" placeholder="' + escapeHTML(t('transferBackupPasswordPlaceholder')) + '" data-i18n-aria-label="transferBackupPassword" aria-label="' + escapeHTML(t('transferBackupPassword')) + '">' +
+          '<button type="button" onclick="decryptAndPreviewFreeOTP()" class="btn btn-primary" data-i18n="transferDecrypt">' + escapeHTML(t('transferDecrypt')) + '</button>' +
           '</div>';
 
+        setTranslatedText(statsDiv.querySelector('p'), 'transferEncryptedCount', { count: tokenCount });
         previewList.insertBefore(statsDiv, previewList.firstChild);
         updateImportStats(validCount, 0, 0);
         previewDiv.style.display = 'block';
         executeBtn.disabled = true;
-        executeBtn.textContent = '🔒 需要先解密';
+        setTranslatedText(executeBtn, 'transferDecryptFirst');
         return;
       }
 
@@ -93,20 +92,19 @@ export function getPreviewImportCode() {
         totpAuthBackupData = text;
 
         const statsDiv = document.createElement('div');
-        statsDiv.className = 'import-stats-header';
+        statsDiv.className = 'dialog-encrypted-import';
         statsDiv.innerHTML =
-          '<strong>🔐 TOTP Authenticator 加密备份</strong><br>' +
-          '<span style="color: var(--text-secondary);">检测到加密的 TOTP Authenticator 备份</span><br><br>' +
-          '<div style="display: flex; gap: 10px; align-items: center;">' +
-          '<input type="password" id="totpAuthPassword" placeholder="输入备份密码" ' +
-          'style="flex: 1; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">' +
-          '<button onclick="decryptAndPreviewTOTPAuth()" class="btn btn-primary" style="padding: 8px 16px;">解密</button>' +
+          '<strong data-i18n="transferTOTPEncrypted">' + escapeHTML(t('transferTOTPEncrypted')) + '</strong>' +
+          '<p data-i18n="transferTOTPDetected">' + escapeHTML(t('transferTOTPDetected')) + '</p>' +
+          '<div class="dialog-decrypt-controls">' +
+          '<input type="password" id="totpAuthPassword" data-i18n-placeholder="transferBackupPasswordPlaceholder" placeholder="' + escapeHTML(t('transferBackupPasswordPlaceholder')) + '" data-i18n-aria-label="transferBackupPassword" aria-label="' + escapeHTML(t('transferBackupPassword')) + '">' +
+          '<button type="button" onclick="decryptAndPreviewTOTPAuth()" class="btn btn-primary" data-i18n="transferDecrypt">' + escapeHTML(t('transferDecrypt')) + '</button>' +
           '</div>';
 
         previewList.appendChild(statsDiv);
         previewDiv.style.display = 'block';
         executeBtn.disabled = true;
-        executeBtn.textContent = '🔒 需要先解密';
+        setTranslatedText(executeBtn, 'transferDecryptFirst');
         return;
       }
 
@@ -119,7 +117,7 @@ export function getPreviewImportCode() {
       if (isHtmlFormat) {
         const htmlLines = parseHTMLImport(text);
         if (htmlLines.length === 0) {
-          showCenterToast('❌', '未从HTML文件中提取到有效密钥');
+          showCenterToast('❌', t('transferHTMLNoKeys'));
           return;
         }
         lines = htmlLines;
@@ -138,45 +136,50 @@ export function getPreviewImportCode() {
           try {
           lines = parseJsonImport(jsonData);
           if (lines.length === 0) {
-            showCenterToast('❌', '未找到有效的密钥数据');
+            showCenterToast('❌', t('transferNoValidData'));
             return;
           }
           } catch (parseError) {
             console.error('JSON导入解析失败:', parseError);
-            showCenterToast('❌', parseError.message || '未识别的 JSON 导入格式');
+            showCenterToast('❌', parseError.message || t('transferJSONUnknown'));
             return;
           }
         }
       }
       // 检测并解析CSV格式
-      else if (text.includes('服务名称,账户信息,密钥') ||
+      else if (isKnownCSVHeader(text.split('\\n')[0]) ||
                (text.toLowerCase().includes('service') && text.toLowerCase().includes('secret') && text.includes(','))) {
         const csvLines = parseCSVImport(text);
         if (csvLines.length === 0) {
-          showCenterToast('❌', '未从CSV文件中提取到有效密钥');
+          showCenterToast('❌', t('transferCSVNoKeys'));
           return;
         }
         lines = csvLines;
       }
 
       lines.forEach((line, index) => {
-        const trimmedLine = line.trim();
-        if (!trimmedLine) return;
+        const structuredEntry = line !== null && typeof line === 'object';
+        const trimmedLine = structuredEntry ? '' : line.trim();
+        if (!structuredEntry && !trimmedLine) return;
 
         const item = document.createElement('div');
         item.className = 'import-preview-item';
 
         try {
-          if (trimmedLine.startsWith('otpauth://totp/') || trimmedLine.startsWith('otpauth://hotp/')) {
+          let { serviceName, account, secret, type, digits, period, algorithm, counter } = structuredEntry ? line : {};
+          if (!structuredEntry) {
+            if (!trimmedLine.startsWith('otpauth://totp/') && !trimmedLine.startsWith('otpauth://hotp/')) {
+              throw Object.assign(new Error(t('transferInvalidOTPAuth')), { i18nKey: 'transferInvalidOTPAuth' });
+            }
             const fixedLine = trimmedLine.replace(/&amp%3B/g, '&');
             const url = new URL(fixedLine);
-            const type = url.protocol === 'otpauth:' ? url.hostname : 'totp';
-            const secret = url.searchParams.get('secret');
+            type = url.protocol === 'otpauth:' ? url.hostname : 'totp';
+            secret = url.searchParams.get('secret');
             const issuer = url.searchParams.get('issuer') || '';
-            const digits = parseInt(url.searchParams.get('digits')) || 6;
-            const algorithm = (url.searchParams.get('algorithm') || 'SHA1').toUpperCase();
-            const period = parseInt(url.searchParams.get('period')) || 30;
-            const counter = parseInt(url.searchParams.get('counter')) || 0;
+            digits = parseInt(url.searchParams.get('digits')) || 6;
+            algorithm = (url.searchParams.get('algorithm') || 'SHA1').toUpperCase();
+            period = parseInt(url.searchParams.get('period')) || 30;
+            counter = parseInt(url.searchParams.get('counter')) || 0;
 
             // 检查 Ente Auth 格式的已删除标记
             const codeDisplayParam = url.searchParams.get('codeDisplay');
@@ -192,17 +195,17 @@ export function getPreviewImportCode() {
 
             if (isDeleted) {
               item.className += ' skipped';
-              item.innerHTML =
-                '<div class="service-name">⏭️ ' + (issuer || '未知服务') + '</div>' +
-                '<div class="account-name">已删除条目，跳过导入</div>';
+              setImportPreviewRenderer(item, () =>
+                '<div class="service-name">' + dialogIcon('info') + ' ' + escapeHTML(issuer || t('transferUnknownService')) + '</div>' +
+                '<div class="account-name" data-i18n="transferDeletedSkip">' + escapeHTML(t('transferDeletedSkip')) + '</div>');
               previewList.appendChild(item);
               skippedCount++;
               return;
             }
 
             const pathParts = decodeURIComponent(url.pathname.substring(1)).split(':');
-            let serviceName = issuer;
-            let account = '';
+            serviceName = issuer;
+            account = '';
 
             if (pathParts.length >= 2) {
               serviceName = pathParts[0] || issuer;
@@ -215,52 +218,49 @@ export function getPreviewImportCode() {
                 serviceName = pathParts[0];
               }
             }
+          }
 
-            // 清理密钥中的空格和分隔符
-            const cleanedSecret = secret ? secret.replace(/[\\s\\-+]/g, '') : secret;
+          // Match the server's required-name validation before enabling import.
+          serviceName = serviceName.trim();
 
-            if (cleanedSecret && serviceName) {
-              if (validateBase32(cleanedSecret)) {
-                item.className += ' valid';
+          // 清理密钥中的空格和分隔符
+          const cleanedSecret = secret ? secret.replace(/[\\s\\-+]/g, '') : secret;
 
-                let displayInfo = serviceName;
-                if (type === 'hotp') displayInfo += ' [HOTP]';
-                if (digits !== 6) displayInfo += ' [' + digits + '位]';
-                if (period !== 30 && type === 'totp') displayInfo += ' [' + period + 's]';
-                if (algorithm !== 'SHA1') displayInfo += ' [' + algorithm + ']';
+          if (cleanedSecret && serviceName) {
+            if (validateBase32(cleanedSecret)) {
+              item.className += ' valid';
 
-                item.innerHTML =
-                  '<div class="service-name">✅ ' + displayInfo + '</div>' +
-                  '<div class="account-name">' + (account || '(无账户)') + '</div>';
+              const displayInfo = () => formatImportPreviewName(serviceName, type, digits, period, algorithm);
 
-                importPreviewData.push({
-                  serviceName: serviceName,
-                  account: account,
-                  secret: cleanedSecret.toUpperCase(),
-                  type: type,
-                  digits: digits,
-                  period: period,
-                  algorithm: algorithm,
-                  counter: counter,
-                  valid: true,
-                  line: index + 1
-                });
+              setImportPreviewRenderer(item, () =>
+                '<div class="service-name">' + dialogIcon('check') + ' ' + escapeHTML(displayInfo()) + '</div>' +
+                '<div class="account-name">' + escapeHTML(account || t('transferNoAccount')) + '</div>');
 
-                validCount++;
-              } else {
-                throw new Error('无效的Base32密钥格式');
-              }
+              importPreviewData.push({
+                serviceName: serviceName,
+                account: account,
+                secret: cleanedSecret.toUpperCase(),
+                type: type,
+                digits: digits,
+                period: period,
+                algorithm: algorithm,
+                counter: counter,
+                valid: true,
+                line: index + 1
+              });
+
+              validCount++;
             } else {
-              throw new Error('缺少必要信息（密钥或服务名）');
+              throw Object.assign(new Error(t('transferInvalidBase32')), { i18nKey: 'transferInvalidBase32' });
             }
           } else {
-            throw new Error('不是有效的otpauth://格式');
+            throw Object.assign(new Error(t('transferMissingFields')), { i18nKey: 'transferMissingFields' });
           }
         } catch (error) {
           item.className += ' invalid';
-          item.innerHTML =
-            '<div class="service-name">❌ 第' + (index + 1) + '行</div>' +
-            '<div class="error-msg">' + error.message + '</div>';
+          setImportPreviewRenderer(item, () =>
+            '<div class="service-name">' + dialogIcon('error') + t('transferLinePrefix') + (index + 1) + escapeHTML(t('transferLineSuffix')) + '</div>' +
+            '<div class="error-msg">' + escapeHTML(error.i18nKey ? t(error.i18nKey) : error.message) + '</div>');
 
           importPreviewData.push({
             line: index + 1,
@@ -276,7 +276,7 @@ export function getPreviewImportCode() {
 
       updateImportStats(validCount, invalidCount, skippedCount);
       previewDiv.style.display = 'block';
-      executeBtn.textContent = '📥 导入';
+      setTranslatedText(executeBtn, 'transferImport');
       executeBtn.disabled = validCount === 0;
     }
 `;
@@ -348,13 +348,13 @@ export function getExecuteImportCode() {
         : importPreviewData.filter(item => item.valid);
 
       if (validItems.length === 0) {
-        showCenterToast('❌', '没有有效的密钥可以导入');
+        showCenterToast('❌', t('transferNoValidImport'));
         return;
       }
 
       const executeBtn = document.getElementById('executeImportBtn');
       executeBtn.disabled = true;
-      executeBtn.textContent = '⏳ 导入中...';
+      setTranslatedText(executeBtn, 'transferImportingButton');
 
       // 跨轮累计的进度坐标系：
       //   - 首轮把当前 validItems.length 记为整批原始总数
@@ -371,8 +371,9 @@ export function getExecuteImportCode() {
 
       const totalChunks = Math.max(1, Math.ceil(validItems.length / BULK_IMPORT_CHUNK_SIZE));
       showImportProgress({
-        title: '批量导入中',
-        message: totalChunks > 1 ? ('准备导入第 1 / ' + totalChunks + ' 批...') : '准备导入...',
+        titleKey: 'transferBulkImporting',
+        messageKey: totalChunks > 1 ? 'transferPreparingBatch' : 'transferPreparingImport',
+        messageParams: { count: totalChunks },
         totalItems: originalTotalItems,
         processedItems: priorProcessedItems,
         successCount: pendingImportPriorSuccessCount,
@@ -391,8 +392,8 @@ export function getExecuteImportCode() {
             const resultIndex = typeof itemResult.index === 'number' ? itemResult.index : 0;
             const srcItem = validItemsForResults[resultIndex];
             const line = srcItem && typeof srcItem.line === 'number' ? srcItem.line : resultIndex + 1;
-            const name = srcItem ? (srcItem.serviceName || '未知服务') : '未知服务';
-            failures.push({ line: line, name: name, error: itemResult.error || '未知错误' });
+            const name = srcItem ? (srcItem.serviceName || t('transferUnknownService')) : t('transferUnknownService');
+            failures.push({ line: line, name: name, error: itemResult.error || t('transferUnknownError') });
           }
         });
         return failures;
@@ -402,9 +403,11 @@ export function getExecuteImportCode() {
       const priorSuccessCountAtStart = pendingImportPriorSuccessCount;
       const priorFailCountAtStart = pendingImportPriorFailCount;
       const priorFailuresAtStart = pendingImportPriorFailures.slice();
+      const priorQueuedCountAtStart = pendingImportPriorQueuedCount;
 
       let successCount = 0;
       let failCount = 0;
+      let queuedCount = 0;
       let thisRunFailures = [];
 
       try {
@@ -422,6 +425,7 @@ export function getExecuteImportCode() {
         });
         successCount = importResult.successCount;
         failCount = importResult.failCount;
+        queuedCount = importResult.queuedCount;
 
         importResult.results.forEach(function(itemResult) {
           const resultIndex = typeof itemResult.index === 'number' ? itemResult.index : 0;
@@ -433,11 +437,11 @@ export function getExecuteImportCode() {
             : resultIndex + 1;
 
           if (itemResult.success) {
-            const secretName = itemResult.secret && itemResult.secret.name ? itemResult.secret.name : (fallbackItem ? fallbackItem.serviceName : '未知服务');
+            const secretName = itemResult.secret && itemResult.secret.name ? itemResult.secret.name : (fallbackItem ? fallbackItem.serviceName : t('transferUnknownService'));
             console.log('✅ 第' + lineNumber + ' 行导入成功', secretName);
           } else {
-            const name = fallbackItem ? (fallbackItem.serviceName || '未知服务') : '未知服务';
-            thisRunFailures.push({ line: lineNumber, name: name, error: itemResult.error || '未知错误' });
+            const name = fallbackItem ? (fallbackItem.serviceName || t('transferUnknownService')) : t('transferUnknownService');
+            thisRunFailures.push({ line: lineNumber, name: name, error: itemResult.error || t('transferUnknownError') });
             console.error('❌ 第' + lineNumber + ' 行导入失败', itemResult.error);
           }
         });
@@ -458,18 +462,20 @@ export function getExecuteImportCode() {
           pendingImportPriorSuccessCount = priorSuccessCountAtStart + partialSuccessCount;
           pendingImportPriorFailCount = priorFailCountAtStart + partialFailCount;
           pendingImportPriorFailures = priorFailuresAtStart.concat(newFailures);
+          pendingImportPriorQueuedCount = priorQueuedCountAtStart + (typeof error?.partialQueuedCount === 'number' ? error.partialQueuedCount : 0);
           // 跨轮累计的"已处理"计数：下一轮读它重建进度面板
           pendingImportPriorProcessedItems = priorProcessedItems + processedValidItems;
 
           const aggregateSuccess = pendingImportPriorSuccessCount;
           const aggregateFail = pendingImportPriorFailCount;
           const aggregateProcessed = pendingImportPriorProcessedItems;
-          showCenterToast('⚠️', '本轮已处理 ' + processedValidItems + ' 条（累计成功 ' + aggregateSuccess + '，累计失败 ' + aggregateFail + '），剩余 ' + remainingRetryItems.length + ' 条待继续：' + error.message);
+          showCenterToast('⚠️', t('transferImportPaused', { processed: processedValidItems, success: aggregateSuccess, failed: aggregateFail, remaining: remainingRetryItems.length, error: error.message }));
           executeBtn.disabled = false;
-          executeBtn.textContent = remainingRetryItems.length > 0 ? '📥 继续导入剩余项' : '📥 导入';
+          setTranslatedText(executeBtn, remainingRetryItems.length > 0 ? 'transferContinueImport' : 'transferImport');
           updateImportProgress({
-            title: '部分导入成功',
-            message: '已处理 ' + aggregateProcessed + ' / ' + originalTotalItems + '，剩余 ' + remainingRetryItems.length + ' 条待继续',
+            titleKey: 'transferPartialImport',
+            messageKey: 'transferImportRemaining',
+            messageParams: { processed: aggregateProcessed, total: originalTotalItems, remaining: remainingRetryItems.length },
             totalItems: originalTotalItems,
             processedItems: aggregateProcessed,
             successCount: aggregateSuccess,
@@ -485,9 +491,9 @@ export function getExecuteImportCode() {
         if (!isRetryingPendingItems) {
           resetImportRetryState();
         }
-        showCenterToast('❌', '导入失败：' + error.message);
+        showCenterToast('❌', t('transferImportFailedColon') + error.message);
         executeBtn.disabled = false;
-        executeBtn.textContent = isRetryingPendingItems ? '📥 继续导入剩余项' : '📥 导入';
+        setTranslatedText(executeBtn, isRetryingPendingItems ? 'transferContinueImport' : 'transferImport');
         return;
       }
 
@@ -498,8 +504,8 @@ export function getExecuteImportCode() {
       const aggregateProcessed = priorProcessedItems + validItems.length;
 
       updateImportProgress({
-        title: '批量导入完成',
-        message: aggregateFail === 0 ? '导入完成' : '导入完成，存在失败项',
+        titleKey: 'transferBulkComplete',
+        messageKey: aggregateFail === 0 ? 'transferImportComplete' : 'transferImportWithFailures',
         totalItems: originalTotalItems,
         processedItems: aggregateProcessed,
         successCount: aggregateSuccess,
@@ -508,23 +514,33 @@ export function getExecuteImportCode() {
         chunkCount: totalChunks
       });
 
-      if (aggregateFail === 0) {
-        showCenterToast('✅', '成功导入 ' + aggregateSuccess + ' 个密钥');
+      if (priorQueuedCountAtStart + queuedCount > 0) {
+        // 未联网的部分（含之前各轮）只在本机排队，不能报成已导入；同步进度见「未同步更改」
+        showCenterToast('📥', t('coreQueued'));
+      } else if (aggregateFail === 0) {
+        showCenterToast('✅', t('transferImported', { count: aggregateSuccess }));
       } else {
-        showCenterToast('⚠️', '导入完成: ' + aggregateSuccess + ' 成功, ' + aggregateFail + ' 失败');
-        // 把累计失败明细打印出来，方便用户在 devtools 里核对（UI 层没有专门的汇总模态框）
-        aggregateFailures.forEach(function(f) {
-          console.error('❌ 第' + f.line + ' 行导入失败（累计）', f.name, f.error);
-        });
+        showCenterToast('⚠️', t('transferImportSummary', { success: aggregateSuccess, failed: aggregateFail }));
       }
+      aggregateFailures.forEach(function(f) {
+        console.error('❌ 第' + f.line + ' 行导入失败（累计）', f.name, f.error);
+      });
 
       await loadSecrets();
       hideImportModal();
+
+      // 逐条列出失败原因（重复、参数不受支持等），不必打开控制台查看
+      if (aggregateFailures.length > 0) {
+        showImportResultModal(aggregateSuccess, aggregateFail, aggregateFailures.map(function(f) {
+          return { name: f.name, error: f.error };
+        }));
+      }
     }
 
     async function importSecretsInChunks(items, onProgress) {
       let successCount = 0;
       let failCount = 0;
+      let queuedCount = 0;
       const results = [];
       let processedItems = 0;
       const chunks = splitBatchImportItems(items, BULK_IMPORT_CHUNK_SIZE);
@@ -536,8 +552,9 @@ export function getExecuteImportCode() {
         const currentChunkNumber = chunkIndex + 1;
 
         reportImportProgress(onProgress, {
-          title: '批量导入中',
-          message: '正在处理第 ' + currentChunkNumber + ' / ' + chunkCount + ' 批...',
+          titleKey: 'transferBulkImporting',
+          messageKey: 'transferProcessingBatch',
+            messageParams: { index: currentChunkNumber, count: chunkCount },
           totalItems: items.length,
           processedItems: processedItems,
           successCount: successCount,
@@ -564,6 +581,14 @@ export function getExecuteImportCode() {
 
           if (response.ok) {
             const result = await response.json();
+
+            // 离线时 Service Worker 只把这一片放进本机队列（202），联网后才真正导入
+            if (result && result.queued && result.offline) {
+              queuedCount += chunk.length;
+              processedItems += chunk.length;
+              continue;
+            }
+
             const chunkSuccessCount = typeof result.successCount === 'number' ? result.successCount : chunk.length;
             const chunkFailCount = typeof result.failCount === 'number' ? result.failCount : 0;
 
@@ -580,8 +605,9 @@ export function getExecuteImportCode() {
 
             processedItems += chunk.length;
             reportImportProgress(onProgress, {
-              title: '批量导入中',
-              message: '已完成第 ' + currentChunkNumber + ' / ' + chunkCount + ' 批',
+              titleKey: 'transferBulkImporting',
+              messageKey: 'transferCompletedBatch',
+            messageParams: { index: currentChunkNumber, count: chunkCount },
               totalItems: items.length,
               processedItems: processedItems,
               successCount: successCount,
@@ -597,20 +623,21 @@ export function getExecuteImportCode() {
           // 由 catch 统一附加 partial 进度元数据，避免在多处重复组装同样的 meta
           let errorMessage;
           if (response.status === 429) {
-            errorMessage = '批量导入被限流，已停止后续提交，请稍后重试。';
+            errorMessage = t('transferRateLimited');
           } else if (response.status >= 500) {
-            errorMessage = '第 ' + currentChunkNumber + ' / ' + chunkCount + ' 批导入响应异常，当前批次结果可能未知，请刷新后核对已导入数据。';
+            errorMessage = t('transferBatchResponseError', { index: currentChunkNumber, count: chunkCount });
           } else {
-            errorMessage = '第 ' + currentChunkNumber + ' / ' + chunkCount + ' 批导入失败：' + (await readBatchImportErrorMessage(response)) + '，已停止后续提交。';
+            errorMessage = t('transferBatchFailed', { index: currentChunkNumber, count: chunkCount, error: await readBatchImportErrorMessage(response) });
           }
           throw new Error(errorMessage);
 
         } catch (error) {
           throw createChunkImportError(
-            (error && error.message) || ('第 ' + currentChunkNumber + ' / ' + chunkCount + ' 批请求失败，当前批次结果可能未知，请刷新后核对已导入数据。'),
+            (error && error.message) || (t('transferBatchRequestError', { index: currentChunkNumber, count: chunkCount })),
             {
               partialSuccessCount: successCount,
               partialFailCount: failCount,
+              partialQueuedCount: queuedCount,
               processedItems: processedItems,
               results: results.slice(),
               chunkIndex: currentChunkNumber,
@@ -621,7 +648,7 @@ export function getExecuteImportCode() {
         }
       }
 
-      return { successCount, failCount, results };
+      return { successCount, failCount, queuedCount, results };
     }
 `;
 }

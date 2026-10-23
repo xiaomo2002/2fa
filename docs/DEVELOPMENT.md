@@ -2,16 +2,17 @@
 
 ## 📋 目录
 
-- [项目架构](#项目架构)
-- [模块说明](#模块说明)
-- [开发环境](#开发环境)
-- [代码规范](#代码规范)
-- [API设计](#api设计)
-- [数据库设计](#数据库设计)
-- [部署](#部署)
-- [测试指南](#测试指南)
-- [性能优化](#性能优化)
-- [故障排查](#故障排查)
+- [项目架构](#️-项目架构)
+- [模块说明](#-模块说明)
+- [开发环境](#️-开发环境)
+- [代码规范](#-代码规范)
+- [API设计](#-api设计)
+- [数据库设计](#️-数据库设计)
+- [部署](#-部署)
+- [测试指南](#-测试指南)
+- [浏览器扩展开发与测试](#浏览器扩展开发与测试)
+- [性能优化](#-性能优化)
+- [故障排查](#-故障排查)
 
 ## 🏗️ 项目架构
 
@@ -27,7 +28,7 @@
 ├── 后端 (Worker模块)
 │   ├── 路由处理
 │   ├── API服务
-│   ├── OTP算法（TOTP/HOTP/Steam Guard）
+│   ├── OTP算法（TOTP/HOTP）
 │   ├── JWT 认证
 │   ├── AES-GCM 加密
 │   └── 数据验证
@@ -37,6 +38,8 @@
 ```
 
 ### 模块化设计
+
+以下列出主要模块，完整文件清单以 `src/` 目录为准。OTP 的 HMAC 和 Base32 实现在 `otp/generator.js`，数据加密使用 `utils/encryption.js`，密码哈希及 JWT 使用 `utils/auth.js`；加密运算调用 Web Crypto API。
 
 ```
 src/
@@ -54,33 +57,49 @@ src/
 │   │   └── otp.js        # OTP 生成
 │   └── favicon.js         # Favicon 代理
 ├── otp/
-│   └── generator.js       # 🔐 TOTP/HOTP/Steam Guard 算法
+│   └── generator.js       # 🔐 TOTP/HOTP 算法
 ├── ui/
 │   ├── page.js           # 🎨 主页面 HTML 生成
+│   ├── quickOtp.js       # 🔢 公开 OTP 输入与验证码页面
 │   ├── setupPage.js      # 🔧 首次设置页面
+│   ├── standalone.js     # 🖥️ 独立页面共享 Fluent 主题
+│   ├── offlinePage.js    # 📴 离线兜底页面
+│   ├── dialogIcons.js    # 🧩 对话框图标
 │   ├── manifest.js       # 📱 PWA Manifest
 │   ├── serviceworker.js  # ⚙️ Service Worker
 │   ├── scripts/          # 📜 前端 JavaScript 模块
 │   │   ├── index.js     # 模块集成入口
 │   │   ├── state.js     # 全局状态管理
+│   │   ├── time.js      # 时间校准
 │   │   ├── auth.js      # 认证逻辑
-│   │   ├── core.js      # 核心业务逻辑（~106KB）
+│   │   ├── otp.js       # OTP 计算、倒计时与交接动效
+│   │   ├── ui.js        # 主题与弹窗交互
+│   │   ├── search.js    # 搜索和显示控制
+│   │   ├── settings.js  # 设置面板
+│   │   ├── core.js      # 核心业务逻辑
+│   │   ├── serviceAggregation.js # 服务分组
 │   │   ├── utils.js     # 工具函数
-│   │   └── pwa.js       # PWA 功能
+│   │   ├── pwa.js       # PWA 功能
+│   │   └── moduleLoader.js # 懒加载模块入口
 │   └── styles/           # 🎨 前端 CSS 模块
 │       ├── index.js     # 样式集成入口
+│       ├── variables.js # 主题变量与切换过渡
 │       ├── base.js      # 基础样式
 │       ├── components.js # 组件样式
 │       ├── modals.js    # 模态框样式
-│       └── responsive.js # 响应式样式
+│       ├── responsive.js # 响应式样式
+│       ├── progress.js   # 共享进度条常量
+│       ├── workspace.js # Fluent 2 主工作区
+│       ├── dialogs.js   # Fluent 2 对话框
+│       ├── setup.js     # 首次设置页
+│       └── backupDocument.js # HTML 备份文档
 └── utils/                # 🛠️ 工具函数
     ├── auth.js           # 🔑 JWT 认证（PBKDF2, HttpOnly Cookie）
     ├── backup.js         # 💾 智能备份（事件驱动 + 并发合并 + 自动清理）
     ├── constants.js      # 📋 常量定义
-    ├── crypto.js         # 🔐 加密工具（HMAC-SHA1/256）
     ├── encryption.js     # 🔒 AES-GCM 256 位加密
     ├── logger.js         # 📝 结构化日志
-    ├── monitoring.js     # 📊 错误追踪（Sentry 集成）
+    ├── monitoring.js     # 📊 错误追踪与性能监控
     ├── rateLimit.js      # 🛡️ 请求限流
     ├── response.js       # 📡 标准化 HTTP 响应
     ├── security.js       # 🔒 CORS/CSP 安全头
@@ -197,19 +216,19 @@ export default {
 
 ### 4. OTP生成模块 (`otp/generator.js`)
 
-**职责**: TOTP/HOTP/Steam Guard 算法实现
+**职责**: TOTP/HOTP 算法实现
 
 **技术规范**:
 
 - **TOTP (RFC 6238)**: 时间步长30秒，HMAC-SHA1/SHA256/SHA512
 - **HOTP (RFC 4226)**: 基于计数器，HMAC-SHA1
-- **Steam Guard**: 自定义5字符编码，字母表 `23456789BCDFGHJKMNPQRTVWXY`
+
+支持 6 位或 8 位数字验证码，不支持 Steam Guard 的 5 位字符验证码。
 
 **核心功能**:
 
 - Base32密钥解码
 - TOTP/HOTP算法实现
-- Steam Guard 编码
 - 时间同步处理
 - OTPAuth URL生成
 
@@ -234,34 +253,53 @@ const otp = binary % 1000000;
 - `setupPage.js` - 首次设置页面
 - `manifest.js` - PWA Manifest
 - `serviceworker.js` - Service Worker（缓存策略）
-- `scripts/` - 前端JavaScript模块（5个模块）
-- `styles/` - 前端CSS模块（4个模块）
+- `scripts/` - 核心交互脚本和按需加载的导入、导出、备份、二维码及工具模块
+- `styles/` - 主题变量、基础组件、响应式布局及 Fluent 2 页面样式
 
 **前端 JavaScript 模块加载顺序**:
 
-1. `state.js` - 全局变量
-2. `auth.js` - 认证函数
-3. `core.js` - 核心业务逻辑（最大模块，~106KB）
-4. `utils.js` - 辅助函数
-5. `pwa.js` - PWA 功能
+1. `utils.js`、`state.js`、`time.js` - 通用函数、全局状态和校准时间
+2. `auth.js`、`otp.js` - 认证和验证码计算/刷新
+3. `ui.js`、`search.js`、`settings.js` - 页面交互、显示控制和设置
+4. `core.js`、`serviceAggregation.js` - 密钥业务流程和服务分组
+5. `pwa.js`、`moduleLoader.js`、`versionCheck.js` - PWA、按需模块和版本检查
+
+导入、导出、备份、二维码、Google 迁移和工具代码由 `moduleLoader.js` 按需加载；传统完整模式则由 `scripts/index.js` 按依赖顺序一次性拼接。
 
 **Service Worker 缓存策略**:
 
-- **静态资源** (/, manifest, icons): Cache First
-- **CDN 库** (jsQR, qrcode): Cache First with CORS
-- **API 请求**: Network Only（永不缓存）
-- 缓存名: `2fa-v2`
+- **主页** (`/`): Network First；网络失败时返回缓存，缓存也不存在时返回离线页
+- **Favicon 代理**: Cache First
+- **CDN 库** (jsQR, qrcode): 缓存命中后后台更新，首次请求使用 CORS 获取并缓存
+- **API 请求**（Favicon 代理除外）: 请求网络，不缓存响应；支持的密钥写操作遇到网络错误时进入离线同步队列，其他 API 返回错误
+- **其他同源资源**: Network Only；网络错误时返回 503，无 Service Worker 缓存回退
+- **其他外部资源**: Network Only；网络错误时返回空 404，无 Service Worker 缓存回退
+- 缓存名由部署版本生成：`2fa-cache-${SW_VERSION}`
 
 **页面结构**:
 
 ```
 页面组件
-├── 头部区域 (Logo + 主题切换)
+├── 头部区域 (Logo)
 ├── 搜索区域 (实时搜索)
-├── 操作区域 (添加/扫描/导入/导出)
-├── 密钥列表 (卡片式布局)
-└── 模态框 (添加/编辑/二维码/扫描/导入)
+├── 显示控制 (智能聚合/平铺/排序)
+├── 密钥列表 (卡片与服务分组)
+├── 悬浮操作入口 (添加/扫描/导入/导出/设置)
+└── 模态框 (密钥、工具、同步、还原和偏好设置)
 ```
+
+#### 弹窗关闭约定
+
+主页面弹窗通过 `ui/scripts/modalDismissal.js` 统一处理用户发起的关闭操作：
+
+- 根节点必须声明 `data-dialog-kind="form"`（包含输入、待导入内容）或 `data-dialog-kind="passive"`（展示、格式选择等），用于判断是否存在未保存内容。所有弹窗都支持点击背景关闭，并复用关闭按钮的处理；从弹窗内开始拖动到背景松开不会触发关闭。
+- 关闭按钮使用 `.close-btn`，取消、完成及会离开当前表单的入口标记 `data-dialog-dismiss`。Esc 只处理最上层弹窗，并复用该弹窗的关闭按钮；嵌套确认框的 Esc 表示取消确认。
+- 有未保存内容时，点击背景、关闭按钮、取消和 Esc 均先确认；没有未保存内容时直接关闭。取消确认保留输入，确认放弃后仍执行原来的关闭函数，负责摄像头、计时器及导入状态等清理。保存成功后的程序主动关闭不弹出放弃确认。
+- 常规弹窗通过 `showModal()` / `hideModal()` 管理生命周期。自行创建或显示的弹窗须配对调用 `trackModalOpen()` / `trackModalClosed()`；加载已有表单数据、保存完成或清空表单后用 `markModalSaved()` 更新比较基准。不能在用户仍有未保存编辑时重置基准。
+- 设置偏好自动保存与密码表单分别判断。关闭设置时等待最新一轮编辑的自动保存；保存失败或密码尚未提交时才询问是否放弃。关闭等待上限为 5 秒，超时后允许确认关闭或继续编辑，并明确说明关闭不会撤销已提交的保存。旧关闭流程停止等待后不能再为新编辑发起保存。
+- 动态迁移预览切换语言时原位更新文本，保留节点、选择和关闭会话，避免重建后盖住正在等待的确认框。
+
+行为回归测试位于 `tests/ui/modal-dismissal.test.js`。
 
 ### 6. 工具模块 (`utils/`)
 
@@ -272,7 +310,7 @@ const otp = binary % 1000000;
 **关键特性**:
 
 - JWT tokens 存储在 HttpOnly, Secure, SameSite=Strict cookies
-- Token 有效期 1 天
+- Token 默认有效期 30 天（可在设置中自定义），剩余不足 7 天时自动续期
 - 首次使用通过 `/setup` 设置密码
 
 #### 加密模块 (`utils/encryption.js`)
@@ -303,9 +341,7 @@ const otp = binary % 1000000;
 
 **预设**:
 
-- API请求: 60次/分钟
-- 登录尝试: 5次/分钟
-- OTP生成: 100次/分钟
+`RATE_LIMIT_PRESETS` 提供可复用配置，只有调用限流逻辑的处理器才应用相应限制，不能把预设视为所有端点的默认限额。各端点实际配置见 [API 参考的速率限制说明](API_REFERENCE.md#rate-limiting)。
 
 #### 验证模块 (`utils/validation.js`)
 
@@ -351,7 +387,7 @@ const otp = binary % 1000000;
 
 ### 环境要求
 
-- **Node.js**: >= 16.0.0
+- **Node.js**: >= 20.19.0，推荐使用当前 LTS
 - **npm**: >= 8.0.0
 - **Wrangler CLI**: >= 3.0.0
 - **Cloudflare账户**: 用于部署和KV存储
@@ -378,8 +414,8 @@ npm install
 npx wrangler login
 
 # 创建KV存储
-npx wrangler kv:namespace create SECRETS_KV
-npx wrangler kv:namespace create SECRETS_KV --preview
+npx wrangler kv namespace create SECRETS_KV
+npx wrangler kv namespace create SECRETS_KV --preview
 ```
 
 4. **启动开发服务器**:
@@ -637,7 +673,7 @@ data_hash → 数据变更检测哈希
   "name": "服务名称",            // 显示名称
   "account": "账户名称",         // 可选的账户信息
   "secret": "BASE32SECRET",     // Base32编码的密钥
-  "type": "totp",               // 类型: totp/hotp/steam
+  "type": "totp",               // 类型: totp/hotp
   "algorithm": "SHA1",          // 哈希算法
   "digits": 6,                  // OTP位数
   "period": 30,                 // 时间步长（秒）
@@ -690,15 +726,14 @@ function migrateSecrets(secrets) {
 详细的部署指南请参考 [部署文档](DEPLOYMENT.md)，包括：
 
 - 一键部署（GitHub 按钮）
-- 非开发者图文教程
-- 开发者快速部署
+- 命令行部署
 - 自定义域名和环境变量配置
 
 ## 🧪 测试指南
 
 ### 测试框架
 
-本项目使用 [Vitest](https://vitest.dev/) 作为测试框架，共有 598 个测试用例。
+本项目使用 [Vitest](https://vitest.dev/) 作为测试框架。测试数量会随功能增长，以 `npm test` 的当次输出为准，避免在文档中维护易过期的固定数字。
 
 ### 运行测试
 
@@ -739,6 +774,104 @@ curl -b cookies.txt -X POST https://your-worker.workers.dev/api/secrets \
   -H "Content-Type: application/json" \
   -d '{"name":"Test","secret":"JBSWY3DPEHPK3PXP"}'
 ```
+
+### 浏览器扩展开发与测试
+
+Chrome、Edge 与 Firefox 的 Manifest V3 扩展源码位于 `extension/`，扩展版本、浏览器构建与 Worker 部署相互独立。Firefox 使用 `extension/firefox/` 中的适配层和独立构建，桌面版与 Android 版最低均为 153；仅支持普通标签页，桌面端还要求默认容器，不支持隐私标签页或桌面容器标签页。连接模式有 `session`（网页登录）和 `offline`（网页登录＋离线缓存），默认使用 `session`。两种模式都支持点击扩展、手动复制与填充、按页面授权后的自动填充；快捷键填充仅用于桌面端。
+
+网页登录模式授予实例权限后，后台使用 `credentials: include`、`cache: no-store`、`redirect: error` 直接请求 `/api/secrets` 与 `/api/time`，在单次任务内存中计算 TOTP。此模式需要联网；Cookie 过期后由用户点击“打开 2FA”重新登录，扩展不自动开页或续期。
+
+离线模式明确启用后，使用同一网页登录 API 同步账户与时间，也允许用户点击“从 2FA 网页恢复”，从已打开、与当前实例完整 origin 相同的顶层网页读取 `2fa-secrets-cache` 和 `2fa-clock-sync-v1`。扩展在 `chrome.storage.local.offlineCache` 保存当前实例的原始密钥、时间戳与校时信息，后台本地计算 TOTP；关闭网页、后台重启或浏览器重启后仍可使用。缓存解析与校时校验复用 `src/shared/` 中的模块。
+
+有缓存时的滚动取码、到期换码和填充不请求网络，离线模式图标使用已保存的本地图像，缺失时显示文字占位。读取账户列表遇到超过 5 分钟的缓存会尝试同步，传输或服务器暂时故障时保留旧缓存并退避 30 秒；401/403 或无效账户响应清除缓存。账户响应有效但校时失败时仍更新账户列表；已有校准不可用或检测到本机时间跳变时暂停取码，直至重新同步。此前从未获得校准信息时，可使用本机时间并提示。
+
+仅离线模式持久保存种子，且没有额外的密码加密，采用与主网页浏览器缓存相同的信任模型。Chrome / Edge 的本地和会话存储限制为 `TRUSTED_CONTEXTS`。Firefox 使用原生扩展存储，`storage.local` 不提供这项访问限制，`storage.session` 默认不向内容脚本开放，详见[Firefox 隐私说明](../extension/PRIVACY_FIREFOX.md)。网页登录模式的完整密钥列表只在后台单次任务内处理，完成后释放引用；传给 Popup、服务分组和目标站点的数据均不包含种子。常规在线取码不向实例网页注入来源脚本；离线模式的网页缓存读取仅由用户明确触发。原管理登录和 Cookie 配置不变，也不增加 `cookies` 权限。
+
+扩展与主网页缓存是独立副本，网页退出登录或清除站点数据不自动清除扩展缓存，断网时无法立即执行服务端撤销或接收账户修改。在已保存的连接上关闭“允许离线使用”会立即删除缓存并切回 `session`；切换实例、切到 `session` 或撤销实例主机权限也清除缓存。仅缓存当前实例，不跨实例回退。使用方法与权限说明见[扩展指南](BROWSER_EXTENSION.md)。
+
+维护界面控制器时，请保持以下边界：
+
+- 弹窗入口组合账户展示、来源刷新和授权流程；卡片预览、刷新计时器和授权状态由各自模块管理，不通过共享可写状态对象相互修改。
+- 设置页的网站授权、账户绑定、搜索和列表请求版本由网站设置控制器管理；连接表单与离线开关的保存仍由连接入口编排。地址输入始终可见，编辑状态只表示未保存的草稿；无草稿时主按钮只检查连接，有草稿时才保存。输入规范化由设置页局部适配器补全协议，后台仍要求规范的 origin。
+- 目标页面的 `automatic.js` 负责访问、授权和账户流程；`automatic-panel.js` 只管理提示面板与用户操作，`automatic-observation.js` 管理 DOM 观察和页面生命周期。面板不读写账户流程状态，观察模块暂停后可恢复，永久销毁后不再启动任务。
+- 后台的 `registration-controller.js` 共用脚本注册、页面调用超时和失败清理；自动填充与来源监视分别提供自己的授权作用域。常规配置未变化时不触达页面，实例、连接模式或路径变化时更新相关来源。后台首次恢复会保守停止地址不可见的旧脚本；页面调用失败保留有界的内存重试记录，不能把失败当成永久完成。
+- `START_FLOW` 与填充共用一次性请求的操作队列；账户和图标的网络维护不占用该队列。账户修订与校时修订分别检查，时间变化时立即停用旧验证码。
+- `chrome.permissions.request` 必须在原始点击调用栈中、首次 `await` 之前发起；后台保存授权意图，以应对权限提示关闭弹窗的情况。
+- 模块负责释放自己的监听器、观察器与计时器，异步返回后再次检查实例和操作是否仍有效。销毁与页面暂时隐藏分开处理，避免破坏浏览器前进／后退缓存恢复。
+- 填充期间的目标校验只在同一次同步调用、没有页面回调介入的相邻检查之间复用。发出 `beforeinput`、`input`、`change` 或原生写值前使结果失效，每次事件后仍完整检查目标；验证码时间检查始终实时执行。不能依赖 MutationObserver 来跨事件缓存判定，因为 CSSOM 和已有元素的 `attachShadow()` 也会改变可填充目标。
+
+后台工作流按以下职责组织，`workflow.js` 保留现有操作导出，供消息路由和自动填充调用；实现模块不得反向依赖这个入口：
+
+| 模块                    | 职责                                                       |
+| ----------------------- | ---------------------------------------------------------- |
+| `workflow.js`           | 账户选择、填充、复制的流程编排                             |
+| `target-session.js`     | 捕获目标文档与登录账号，领取和消费一次性请求，准备输入框   |
+| `source-service.js`     | 在线／离线来源分发、取码、有效期及来源版本校验             |
+| `offline-management.js` | 显式同步、网页缓存导入、停用缓存、读取缓存状态与图标       |
+| `configuration.js`      | 当前实例、来源权限、连接模式和配置版本校验                 |
+| `browser-access.js`     | 有超时的浏览器调用、文档消息、来源标签页查找和显式打开实例 |
+| `errors.js`             | 统一错误类型与公开错误文案                                 |
+
+配置写入队列仍由后台入口管理，目标请求的内存领取记录由 `target-session.js` 管理，缓存写入及来源版本仍由 `offline-source.js` 管理。移动流程时不要合并这些不同生命周期的状态，也不要删掉异步边界前后的复查。
+
+账户搜索、服务聚合及离线缓存解析的共享逻辑位于 `src/shared/`，扩展直接导入普通 ES 模块。主网页继续通过 `src/ui/scripts/` 适配器生成内联脚本；适配器只序列化自包含的函数或工厂，并显式传入配置，不单独序列化依赖模块变量的函数。可序列化函数内部的具名函数采用对象方法语法，避免 Wrangler 默认保留函数名时注入外部辅助函数。`shared-browser-code.test.js` 验证压缩与保留函数名开关的四种组合，确保输出网页和直接导入的行为一致。
+
+```bash
+# 构建 Chrome / Edge 的可侧载目录
+npm run build:extension
+
+# 独立构建 Firefox
+node scripts/build-firefox-extension.js
+
+# 扩展单元、协议、后台 API 与 DOM 测试
+npm run test:extension
+
+# 扩展专项覆盖率（只运行扩展测试，统计 extension/src 和 src/shared）
+npm run test:extension:coverage
+
+# 首次安装 E2E 所需的浏览器运行时
+npx playwright install chromium
+
+# 重新构建 Chrome / Edge 并运行 Chromium E2E
+npm run test:extension:e2e
+
+# 构建三个浏览器并打包发布用的安装包：dist/2fa-extension-{chrome,edge,firefox}-<扩展版本>.zip
+npm run package:extension
+
+# 项目回归和静态检查
+npm test -- --run
+npm run lint
+```
+
+扩展专项覆盖率由 `vitest.extension.config.js` 运行，共用项目的测试初始化，只收集 `tests/extension/**/*.test.js`，统计 `extension/src/**/*.js` 和 `src/shared/**/*.js`。终端输出覆盖率摘要，报告保存在 `coverage/extension/`：`index.html` 用于浏览，`coverage-summary.json` 和 `lcov.info` 用于工具集成。项目默认的 `npm run test:coverage` 也包含扩展及共享源码。
+
+GitHub Actions 在 `main` 分支推送、PR 和手动触发时运行 lint、扩展覆盖率、Chrome／Edge 构建及浏览器 E2E，并上传测试报告。CI 使用 Playwright Chromium，通过 `EXTENSION_E2E_SKIP_BRANDED=1` 跳过依赖本机 Chrome／Edge 安装的冒烟测试；本地 E2E 默认包含这些测试，未安装对应浏览器时会跳过。
+
+Chrome / Edge 构建输出为 `dist/extension/chrome` 与 `dist/extension/edge`，桌面端可从扩展管理页选择“加载已解压的扩展程序”。Firefox 独立构建输出为 `dist/extension/firefox`，桌面端可在 `about:debugging#/runtime/this-firefox` 临时载入其中的 `manifest.json`，浏览器重启后需重新载入。Chrome / Edge 构建会重建 `dist/extension`，之后如需加载 Firefox 包，应重新执行 Firefox 构建命令。安装、设置和快捷键操作见[扩展指南](BROWSER_EXTENSION.md)。代码变更后重新构建、在扩展管理页重新加载，并刷新目标标签页；无需为扩展保留或刷新实例标签页。
+
+测试覆盖 TOTP 标准向量、API 与消息校验、缓存和权限边界、账户匹配、输入识别及导航竞态。浏览器 E2E 使用本地测试页面验证在线取码、离线缓存、自动填充和会话恢复；`tests/extension/e2e/branded.spec.js` 使用原始构建检查工具栏弹窗与 `activeTab` 填充。
+
+当前浏览器 E2E 运行在桌面 Chromium / Chrome / Edge；将视口缩小到手机尺寸只验证布局，不代表 Android 实机通过。Firefox Android 适配已加入源码，尚未完成 Android 实机验收，兼容的商店新版待发布。Edge Android 已有用户实测可用，但尚未加入 Android 自动化测试。
+
+Firefox Android 的全屏扩展弹窗会遮住目标文档。手动填充由后台核验 Android 平台、当前活动标签页，以及精确匹配的 `moz-extension://` 弹窗仍可见、拥有焦点和本次请求 nonce 后，才允许操作被弹窗遮住的文档；准备输入框与发送验证码前均重新核验。此许可不适用于自动填充，也不能在发送验证码时临时升级，原有文档 ID、页面路径、登录账户与一次性 nonce 检查继续生效。安卓缺少 `cookieStoreId` 时必须先通过原生平台检测，桌面容器和隐私隔离不放宽；缺少快捷键与窗口 API 时分别跳过注册、只激活标签页。
+
+Firefox Android 开发验证需要安装 Android Platform Tools，并在手机启用 USB 调试及 Firefox 的 USB 远程调试；连接手机、批准调试后，用 `adb devices` 确认设备。构建 Firefox 扩展后，可按实际设备 ID 和 Firefox 应用包名运行：
+
+```bash
+npx web-ext run --target=firefox-android --source-dir=dist/extension/firefox --android-device=<设备ID> --firefox-apk=<Firefox应用包名>
+```
+
+浏览器版本须满足 153；此流程供开发时临时加载验证，普通用户应等待兼容 Android 的商店签名版本。实机验收请记录手机系统、浏览器版本和扩展版本，并使用专用测试账户完成：
+
+1. 在普通标签页登录 HTTPS 测试实例，从浏览器扩展菜单打开设置并授权连接；关闭实例页后仍可查看和复制验证码。
+2. 分别检查“打开 2FA”在实例页已打开和未打开时的行为；在目标验证码页面打开全屏扩展弹窗，手动填充单框及分格验证码，并检查无法定位时的提示与确认重试。填充进行中关闭弹窗、切换标签页或退到后台，应停止向原目标发送验证码。
+3. 允许一次页面自动填充，批准权限后返回目标页并重新访问；确认只有已授权路径自动填充，撤销权限后停止。Android 不验收桌面快捷键。
+4. 检查窄屏、横屏、软键盘展开时的搜索和底部操作；开启离线使用并同步后断网取码，关闭离线使用后确认缓存清除。
+5. 确认隐私标签页不可使用扩展；桌面 Firefox 回归默认标签页、容器隔离及快捷键，避免 Android 适配放宽桌面限制。
+
+自动化中的本地测试权限和预授权不改变正式构建，也不能覆盖原生权限提示、键盘快捷键及所有真实网站的行为。浏览器或权限逻辑变更后，应在目标浏览器检查这些交互及真实 HTTPS 实例的连接。
+
+所有测试使用专用测试种子，不应包含真实密钥或账户列表。后端的 `GET /api/secrets` 使用同源 CORS、安全响应头和 `no-store`，相关回归测试位于 `tests/api/secrets-extension-headers.test.js`。
 
 ### 前端测试
 
@@ -843,8 +976,8 @@ if (currentHash !== lastHash) {
 const logger = getLogger(env);
 logger.info('Operation completed', { duration: elapsed, operation: 'backup' });
 
-// 错误追踪（可选 Sentry 集成）
-// 配置 SENTRY_DSN 环境变量启用
+// 错误追踪（使用 utils/monitoring.js）
+monitoring.captureError(error, { operation: 'backup' });
 ```
 
 ## 🔧 故障排查
@@ -924,17 +1057,17 @@ npx wrangler tail --grep "ERROR"
 
 ```bash
 # 查看KV数据
-npx wrangler kv:key list --namespace-id=your-namespace-id
+npx wrangler kv key list --namespace-id=your-namespace-id
 
 # 获取特定键值
-npx wrangler kv:key get "secrets" --namespace-id=your-namespace-id
+npx wrangler kv key get "secrets" --namespace-id=your-namespace-id
 ```
 
 **生产环境监控**:
 
 ```bash
-# 查看 Worker 实时日志
-npx wrangler tail --env production
+# 查看 Worker 实时日志（不带 --env 即生产环境，也就是 wrangler.toml 的顶层配置；开发环境加 --env development）
+npx wrangler tail
 
 # 检查密钥配置
 npx wrangler secret list
@@ -944,6 +1077,8 @@ npx wrangler secret list
 
 ### 版本管理
 
+主程序版本由根目录 `package.json` 管理；浏览器扩展使用 `extension/manifest.base.json` 的独立版本，Chrome、Edge、Firefox 共用该版本。主程序的 `release:*` 命令不更新扩展版本。扩展发布时需单独递增版本号，Chrome / Edge 执行 `npm run build:extension`，Firefox 执行 `node scripts/build-firefox-extension.js`；构建全部目标时按此顺序执行。接口兼容与运行依赖见[扩展指南](BROWSER_EXTENSION.md#版本与运行依赖)。
+
 **语义化版本控制**:
 
 - 主版本号: 不兼容的API修改
@@ -952,12 +1087,13 @@ npx wrangler secret list
 
 **发布流程**:
 
-1. 更新版本号
-2. 更新CHANGELOG.md
-3. 运行测试套件 (`npm test`)
-4. 部署到测试环境
-5. 部署到生产环境
-6. 创建Git标签
+1. 在 `docs/releases/v<版本号>.md` 编写本次发布说明，包括功能、修复、升级方法和完整变更链接。GitHub Release 标题统一使用标签名（如 `v1.9.0`），功能摘要放在说明正文；手动补发也遵循此规则。
+2. 确认功能修改已提交，再运行 `npm run release:patch`、`npm run release:minor`、`npm run release:major` 或 `node scripts/release.js <版本号>`。除本次发布说明与未暂存的本地 `wrangler.toml` 配置外，工作区须保持干净。脚本先依次运行 `npm run lint`、全量测试、Worker 构建和扩展打包（`npm run package:extension`），与 **Publish release** 工作流的检查相同，任一失败即中止且不改动版本号；随后同步版本文件，把发布说明一并提交并创建对应标签；此时仅完成本地准备。`--skip-tests` 只跳过测试，lint 与构建照常运行。
+3. 确认正式发布后，按脚本输出执行 `git push --atomic origin HEAD v<版本号>`，只推送本次标签。已单独完成版本提交时，可先在该提交上创建对应标签，再执行同样的推送步骤。
+4. 标签推送触发 **Publish release** 工作流，从该标签源码运行检查和测试、构建 `worker.js`、`worker.metadata.json` 与 `DEPLOY.md`，打包 Chrome、Edge、Firefox 扩展安装包 `2fa-extension-<浏览器>-<扩展版本>.zip`，再使用对应版本说明创建 GitHub Release。六个附件上传完成后才公开发布；推送标签本身不代表 Release 已完成。
+5. 检查工作流结果及 [Releases](https://github.com/wuzf/2fa/releases) 页面，确认版本说明、六个附件及最新版本标记正确。失败时排查后重跑工作流；草稿可继续上传，已完整发布的版本不会被重复覆盖，补发较旧版本也不会替换更高版本的最新标记。同时推送多个标签时，各标签的工作流并行运行、互不取消。发布后，如果最新版本标记停在同批（前后两分钟内发布）较低的版本上，工作流会把它移到同批最高的稳定版本；标记在其他版本上时视为手动设置，保持不变。重跑已发布版本的工作流时，如果标记仍停在该版本上，也会补做这项检查。
+
+GitHub Release 与 Cloudflare 部署是独立步骤，部署仍使用 `npm run deploy`。Release 工作流不修改 KV 或 Secrets，也不向 Chrome、Edge、Firefox 商店上传扩展；Release 附带的扩展安装包供用户手动安装，商店版本仍需单独提交。
 
 ### 依赖管理
 

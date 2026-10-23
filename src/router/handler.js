@@ -4,19 +4,8 @@
  */
 
 // API 处理器
-import {
-	handleGetSecrets,
-	handleAddSecret,
-	handleUpdateSecret,
-	handleDeleteSecret,
-	handleGenerateOTP,
-	handleBatchAddSecrets,
-	handleBackupSecrets,
-	handleGetBackups,
-	handleRestoreBackup,
-	handleExportBackup,
-	handleExportSecrets,
-} from '../api/secrets/index.js';
+import { handleGenerateOTP, handleGetBackups, handleExportBackup, handleExportSecrets } from '../api/secrets/index.js';
+import { runSecretsOperation } from '../storage/secrets-store.js';
 import { handleFaviconProxy } from '../api/favicon.js';
 import {
 	handleGetWebDAVConfigs,
@@ -44,6 +33,7 @@ import {
 } from '../api/gdrive.js';
 import { handleChangePassword } from '../api/password.js';
 import { handleGetSettings, handleSaveSettings } from '../api/settings.js';
+import { handleGetTime } from '../api/time.js';
 
 // UI 页面生成器
 import { createMainPage } from '../ui/page.js';
@@ -81,6 +71,16 @@ export async function handleRequest(request, env, ctx) {
 	const logger = getLogger(env);
 
 	try {
+		// 时间校准接口必须在设置和认证检查前处理，确保无需访问 KV。
+		if (pathname === '/api/time') {
+			if (method === 'GET') {
+				return handleGetTime(request);
+			}
+			const response = createErrorResponse('方法不允许', `不支持的HTTP方法: ${method}`, 405, request);
+			response.headers.set('Allow', 'GET');
+			return response;
+		}
+
 		// 🔧 首次设置路由（不需要认证）
 		if (pathname === '/setup') {
 			// 检查是否需要首次设置
@@ -89,7 +89,7 @@ export async function handleRequest(request, env, ctx) {
 				// 已完成设置，重定向到首页
 				return Response.redirect(new URL('/', request.url).toString(), 302);
 			}
-			return await createSetupPage();
+			return await createSetupPage(request);
 		}
 
 		// 🔧 首次设置 API（不需要认证）
@@ -121,7 +121,11 @@ export async function handleRequest(request, env, ctx) {
 					return createErrorResponse('未设置密码', '请访问 /setup 进行首次设置。', 503, request);
 				}
 
-				return createUnauthorizedResponse(null, request);
+				const response = createUnauthorizedResponse(null, request);
+				if (pathname === '/api/secrets' && method === 'GET') {
+					response.headers.set('Cache-Control', 'no-store');
+				}
+				return response;
 			}
 
 			// 📊 记录认证详情（用于自动续期）
@@ -147,6 +151,11 @@ export async function handleRequest(request, env, ctx) {
 		if (pathname === '/icon-192.png' || pathname === '/icon-512.png') {
 			const size = pathname.includes('512') ? 512 : 192;
 			return createDefaultIcon(size);
+		}
+
+		// 浏览器自动请求 /favicon.ico —— 复用 192 默认图标避免 404
+		if (pathname === '/favicon.ico') {
+			return createDefaultIcon(32);
 		}
 
 		// 懒加载模块路由（需要认证）
@@ -221,7 +230,13 @@ export async function handleRequest(request, env, ctx) {
 
 		// 处理 /otp/{secret}（生成OTP）
 		if (pathname.startsWith('/otp/')) {
-			const secret = pathname.substring(5); // 去掉 '/otp/'
+			// 解码以正确处理 URL 编码的字符（如 Base32 padding '=' → '%3D'）
+			let secret;
+			try {
+				secret = decodeURIComponent(pathname.substring(5));
+			} catch {
+				secret = pathname.substring(5); // 解码失败则用原值，由后续 validateBase32 报错
+			}
 			return await handleGenerateOTP(secret, request);
 		}
 
@@ -255,9 +270,9 @@ async function handleApiRequest(pathname, method, request, env, ctx) {
 	if (pathname === '/api/secrets') {
 		switch (method) {
 			case 'GET':
-				return handleGetSecrets(env);
+				return runSecretsOperation('secrets.list', request, env, ctx);
 			case 'POST':
-				return handleAddSecret(request, env, ctx);
+				return runSecretsOperation('secrets.add', request, env, ctx);
 			default:
 				return createErrorResponse('方法不允许', `不支持的HTTP方法: ${method}`, 405, request);
 		}
@@ -266,7 +281,7 @@ async function handleApiRequest(pathname, method, request, env, ctx) {
 	// 批量导入API（必须在 /api/secrets/{id} 之前匹配）
 	if (pathname === '/api/secrets/batch') {
 		if (method === 'POST') {
-			return handleBatchAddSecrets(request, env, ctx);
+			return runSecretsOperation('secrets.batch', request, env, ctx);
 		}
 		return createErrorResponse('方法不允许', `不支持的HTTP方法: ${method}`, 405, request);
 	}
@@ -279,17 +294,36 @@ async function handleApiRequest(pathname, method, request, env, ctx) {
 		return createErrorResponse('方法不允许', `不支持的HTTP方法: ${method}`, 405, request);
 	}
 
+	// 回滚旧版本前显式压实HOTP sidecar（受统一API认证保护）
+	if (pathname === '/api/secrets/counters/compact') {
+		if (method === 'POST') {
+			return runSecretsOperation('secrets.compact', request, env, ctx);
+		}
+		return createErrorResponse('方法不允许', `不支持的HTTP方法: ${method}`, 405, request);
+	}
+
+	// HOTP 计数器递增API（必须在 /api/secrets/{id} 之前匹配）
+	if (/^\/api\/secrets\/[^/]+\/counter$/.test(pathname)) {
+		if (method === 'POST') {
+			return runSecretsOperation('secrets.counter', request, env, ctx);
+		}
+		return createErrorResponse('方法不允许', `不支持的HTTP方法: ${method}`, 405, request);
+	}
+
 	if (pathname.startsWith('/api/secrets/')) {
 		const secretId = pathname.substring('/api/secrets/'.length);
 		if (!secretId) {
 			return createErrorResponse('无效路径', '缺少密钥ID', 400, request);
 		}
+		if (secretId.includes('/')) {
+			return createErrorResponse('API未找到', '请求的API端点不存在', 404, request);
+		}
 
 		switch (method) {
 			case 'PUT':
-				return handleUpdateSecret(request, env, ctx);
+				return runSecretsOperation('secrets.update', request, env, ctx);
 			case 'DELETE':
-				return handleDeleteSecret(request, env, ctx);
+				return runSecretsOperation('secrets.delete', request, env, ctx);
 			default:
 				return createErrorResponse('方法不允许', `不支持的HTTP方法: ${method}`, 405, request);
 		}
@@ -299,7 +333,7 @@ async function handleApiRequest(pathname, method, request, env, ctx) {
 	if (pathname === '/api/backup') {
 		switch (method) {
 			case 'POST':
-				return handleBackupSecrets(request, env, ctx);
+				return runSecretsOperation('backup.create', request, env, ctx);
 			case 'GET':
 				return handleGetBackups(request, env, ctx);
 			default:
@@ -310,7 +344,7 @@ async function handleApiRequest(pathname, method, request, env, ctx) {
 	// 恢复备份API
 	if (pathname === '/api/backup/restore') {
 		if (method === 'POST') {
-			return handleRestoreBackup(request, env, ctx);
+			return runSecretsOperation('backup.restore', request, env, ctx);
 		}
 		return createErrorResponse('方法不允许', `不支持的HTTP方法: ${method}`, 405, request);
 	}

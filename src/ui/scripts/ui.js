@@ -10,10 +10,35 @@
 export function getUICode() {
 	return `    // ========== UI 交互模块 ==========
 
+    // Browsers can retain :focus-visible when a keyboard-focused button is
+    // clicked again. Track input changes without blurring the current control.
+    document.addEventListener('pointerdown', function() {
+      document.documentElement.setAttribute('data-card-input', 'pointer');
+    }, true);
+    document.addEventListener('keydown', function(event) {
+      if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+        document.documentElement.removeAttribute('data-card-input');
+      }
+    }, true);
+
     // Toast 提示相关变量
     let toastTimeout = null;
     let isToastVisible = false;
     let lastToastTime = 0;
+    let toastGeneration = 0;
+
+    function refreshToastLanguage() {
+      toastGeneration += 1;
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastTimeout = null;
+      isToastVisible = false;
+      lastToastTime = 0;
+      const toast = document.getElementById('centerToast');
+      if (toast) {
+        toast.classList.remove('show');
+        toast.querySelector('.toast-message').textContent = '';
+      }
+    }
 
     // 显示中间提示
     function showCenterToast(icon, message) {
@@ -24,6 +49,7 @@ export function getUICode() {
         return;
       }
       lastToastTime = now;
+      const generation = ++toastGeneration;
       const toast = document.getElementById('centerToast');
       const iconElement = toast.querySelector('.toast-icon');
       const messageElement = toast.querySelector('.toast-message');
@@ -35,7 +61,8 @@ export function getUICode() {
       }
 
       // 更新内容
-      iconElement.textContent = icon;
+      const feedbackIcon = icon === '✅' ? 'check' : icon === '❌' ? 'error' : icon === '⚠️' ? 'warning' : 'info';
+      iconElement.innerHTML = dialogIcon(feedbackIcon);
       messageElement.textContent = message;
 
       // 如果toast已经显示，先隐藏再显示，确保动画效果
@@ -43,11 +70,13 @@ export function getUICode() {
         toast.classList.remove('show');
         // 等待隐藏动画完成后再显示新的toast
         setTimeout(() => {
+          if (generation !== toastGeneration) return;
           toast.classList.add('show');
           isToastVisible = true;
 
           // 设置新的定时器
           toastTimeout = setTimeout(() => {
+            if (generation !== toastGeneration) return;
             toast.classList.remove('show');
             isToastVisible = false;
             toastTimeout = null;
@@ -60,6 +89,7 @@ export function getUICode() {
 
         // 设置定时器
         toastTimeout = setTimeout(() => {
+          if (generation !== toastGeneration) return;
           toast.classList.remove('show');
           isToastVisible = false;
           toastTimeout = null;
@@ -67,30 +97,62 @@ export function getUICode() {
       }
     }
 
+    // Keep a single active change so an older cleanup cannot interrupt a newer fade.
+    let themeChange = null;
+
     // 应用主题（支持过渡动画）
     function applyTheme(theme, withTransition = false) {
       const root = document.documentElement;
+      const nextTheme = theme === 'dark' || (theme !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+        ? 'dark' : 'light';
+      if (nextTheme === (themeChange ? themeChange.theme : root.getAttribute('data-theme'))) return;
 
-      // 添加过渡类（如果需要动画）
-      if (withTransition && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        root.classList.add('theme-transition');
+      const animate = withTransition && !document.hidden && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      // Only visible cards and group headings need a fade. Offscreen transitions
+      // otherwise keep style/paint work running throughout the transition.
+      // Read bounds BEFORE removing existing transition styles. A layout read
+      // between removal and reapplication would finish the old fade immediately,
+      // making a rapid reversal jump to the previous target color first.
+      const surfaces = animate ? Array.from(document.querySelectorAll('.secret-card, .service-group-header')).filter(surface => {
+        const rect = surface.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 &&
+          rect.top < window.innerHeight && rect.left < window.innerWidth;
+      }) : [];
 
-        // 过渡完成后移除类
-        setTimeout(() => {
-          root.classList.remove('theme-transition');
-        }, 300);
+      const previous = themeChange;
+      themeChange = null;
+      if (previous) {
+        if (previous.timer !== null) clearTimeout(previous.timer);
+        if (previous.frame !== null) cancelAnimationFrame(previous.frame);
+        previous.surfaces.forEach(surface => surface.classList.remove('theme-viewport-transition'));
       }
+      root.classList.remove('theme-transition', 'theme-instant');
+      surfaces.forEach(surface => surface.classList.add('theme-viewport-transition'));
+      const change = { theme: nextTheme, timer: null, frame: null, surfaces };
+      themeChange = change;
+      const finish = () => {
+        if (themeChange !== change) return;
+        themeChange = null;
+        surfaces.forEach(surface => surface.classList.remove('theme-viewport-transition'));
+        root.classList.remove('theme-transition', 'theme-instant');
+      };
+      const afterPaint = (callback) => {
+        change.frame = requestAnimationFrame(() => {
+          if (themeChange !== change) return;
+          change.frame = requestAnimationFrame(() => {
+            change.frame = null;
+            if (themeChange === change) callback();
+          });
+        });
+      };
 
-      // 设置主题属性
-      if (theme === 'dark') {
-        root.setAttribute('data-theme', 'dark');
-      } else if (theme === 'light') {
-        root.setAttribute('data-theme', 'light');
-      } else {
-        // auto 模式：跟随系统
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        root.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
-      }
+      root.classList.add(animate ? 'theme-transition' : 'theme-instant');
+      root.setAttribute('data-theme', nextTheme);
+      // Start cleanup after styles have painted, with a small margin over 180ms.
+      afterPaint(() => {
+        if (animate) change.timer = setTimeout(finish, 220);
+        else finish();
+      });
     }
 
     function initTheme() {
@@ -98,25 +160,79 @@ export function getUICode() {
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         const currentTheme = localStorage.getItem('theme') || 'auto';
         if (currentTheme === 'auto') {
-          applyTheme('auto');
+          applyTheme('auto', true);
         }
       });
     }
 
     // 模态框管理
     function hideQRModal() {
-      const modal = document.getElementById('qrModal');
-      if (!modal || !modal.classList.contains('show')) return;
-      modal.classList.remove('show');
-      setTimeout(() => modal.style.display = 'none', 300);
-      enableBodyScroll();
+      hideModal('qrModal');
+    }
+
+    function syncSecretDialogTranslations() {
+      const title = document.getElementById('modalTitle');
+      const titleKey = editingId ? 'editSecretTitle' : 'addSecretTitle';
+      title.setAttribute('data-i18n', titleKey);
+      title.textContent = typeof t === 'function' ? t(titleKey) : (editingId ? '编辑密钥' : '添加新密钥');
+
+      const submitBtn = document.getElementById('submitBtn');
+      const submitKey = secretDialogSubmission ? 'saving' : (editingId ? 'update' : 'save');
+      submitBtn.setAttribute('data-i18n', submitKey);
+      submitBtn.textContent = typeof t === 'function' ? t(submitKey)
+        : (secretDialogSubmission ? '保存中...' : (editingId ? '更新' : '保存'));
+      syncSecretAdvancedInfo();
+    }
+
+    function syncSecretAdvancedInfo() {
+      const advancedInfo = document.getElementById('advancedInfo');
+      const typeSelect = document.getElementById('secretType');
+      if (!advancedInfo || !typeSelect) return;
+      const isHOTP = typeSelect.value === 'HOTP';
+      const key = isHOTP ? 'secretAdvancedHotpHelp' : 'secretAdvancedHelp';
+      advancedInfo.setAttribute('data-i18n', key);
+      advancedInfo.textContent = typeof t === 'function' ? t(key)
+        : (isHOTP ? 'HOTP使用计数器基准，每次生成后计数器自动递增'
+          : '大多数2FA应用使用默认设置：TOTP、6位、30秒、SHA1算法');
+    }
+
+    // Options added by selectSecretFormValue() for the account being shown.
+    function removeTemporarySecretFormOptions() {
+      const form = document.getElementById('secretForm');
+      if (!form) return;
+      form.querySelectorAll('option[data-temporary-value]').forEach(option => option.remove());
+    }
+
+    function showSecretModal(onShow) {
+      const modal = document.getElementById('secretModal');
+      if (!modal) return;
+      if (typeof trackModalClosed === 'function') trackModalClosed(modal);
+      const generation = ++secretDialogGeneration;
+      secretDialogSubmission = null;
+      secretDialogQueuedOperationId = null;
+      secretDialogStoredParams = null;
+      removeTemporarySecretFormOptions();
+      clearTimeout(secretDialogShowTimer);
+      clearTimeout(secretDialogHideTimer);
+      secretDialogShowTimer = null;
+      secretDialogHideTimer = null;
+      document.getElementById('submitBtn').disabled = false;
+      modal.style.display = 'flex';
+      if (!secretDialogOpen) disableBodyScroll();
+      secretDialogOpen = true;
+      onShow();
+      syncSecretDialogTranslations();
+      if (typeof trackModalOpen === 'function') trackModalOpen(modal);
+      secretDialogShowTimer = setTimeout(() => {
+        if (!secretDialogOpen || secretDialogGeneration !== generation) return;
+        secretDialogShowTimer = null;
+        modal.classList.add('show');
+      }, 10);
     }
 
     function showAddModal() {
-      showModal('secretModal', () => {
+      showSecretModal(() => {
         editingId = null;
-        document.getElementById('modalTitle').textContent = '添加新密钥';
-        document.getElementById('submitBtn').textContent = '保存';
         document.getElementById('secretForm').reset();
         document.getElementById('secretId').value = '';
       });
@@ -125,9 +241,25 @@ export function getUICode() {
     // 隐藏添加/编辑密钥模态框
     function hideSecretModal() {
       const modal = document.getElementById('secretModal');
-      if (!modal || !modal.classList.contains('show')) return;
+      if (!modal || !secretDialogOpen) return;
+      if (typeof trackModalClosed === 'function') trackModalClosed(modal);
+      const generation = ++secretDialogGeneration;
+      secretDialogOpen = false;
+      const submitBtn = document.getElementById('submitBtn');
+      submitBtn.disabled = false;
+      secretDialogSubmission = null;
+      syncSecretDialogTranslations();
+      clearTimeout(secretDialogShowTimer);
+      clearTimeout(secretDialogHideTimer);
+      secretDialogShowTimer = null;
       modal.classList.remove('show');
-      setTimeout(() => modal.style.display = 'none', 300);
+      secretDialogHideTimer = setTimeout(() => {
+        if (secretDialogGeneration !== generation || secretDialogOpen) return;
+        secretDialogHideTimer = null;
+        modal.style.display = 'none';
+        // Removed after the fade so the closing dialog never flips to a default.
+        removeTemporarySecretFormOptions();
+      }, 300);
       enableBodyScroll();
     }
 
@@ -154,6 +286,8 @@ export function getUICode() {
 
     // 折叠式菜单控制函数
     function toggleActionMenu() {
+      // 刚刚结束拖拽时忽略本次点击，避免拖完立刻弹菜单
+      if (fabDragJustHappened) return;
       const mainBtn = document.getElementById('mainActionBtn');
       const submenu = document.getElementById('actionSubmenu');
       const overlay = document.getElementById('menuOverlay');
@@ -173,11 +307,17 @@ export function getUICode() {
       const overlay = document.getElementById('menuOverlay');
 
       mainBtn.classList.add('active');
+      mainBtn.setAttribute('aria-expanded', 'true');
       submenu.classList.add('show');
       overlay.classList.add('show');
 
+      // 根据 FAB 当前位置调整子菜单展开方向，避免溢出视口
+      updateSubmenuDirection();
+
       // 防止点击事件冒泡
-      event.stopPropagation();
+      if (typeof event !== 'undefined' && event && typeof event.stopPropagation === 'function') {
+        event.stopPropagation();
+      }
     }
 
     function closeActionMenu() {
@@ -186,6 +326,7 @@ export function getUICode() {
       const overlay = document.getElementById('menuOverlay');
 
       mainBtn.classList.remove('active');
+      mainBtn.setAttribute('aria-expanded', 'false');
       submenu.classList.remove('show');
       overlay.classList.remove('show');
     }
@@ -210,12 +351,12 @@ export function getUICode() {
       const periodGroup = document.getElementById('periodGroup');
       const algorithmGroup = document.getElementById('algorithmGroup');
       const counterRow = document.getElementById('counterRow');
-      const advancedInfo = document.getElementById('advancedInfo');
       const digitsSelect = document.getElementById('secretDigits');
       const periodSelect = document.getElementById('secretPeriod');
       const algorithmSelect = document.getElementById('secretAlgorithm');
 
       const selectedType = typeSelect.value;
+      syncSecretAdvancedInfo();
 
       switch (selectedType) {
         case 'HOTP':
@@ -224,7 +365,6 @@ export function getUICode() {
           periodGroup.style.display = 'none';
           algorithmGroup.style.display = 'block';
           counterRow.style.display = 'block';
-          advancedInfo.textContent = 'HOTP使用计数器基准，每次生成后计数器自动递增';
           break;
 
         case 'TOTP':
@@ -234,7 +374,6 @@ export function getUICode() {
           periodGroup.style.display = 'block';
           algorithmGroup.style.display = 'block';
           counterRow.style.display = 'none';
-          advancedInfo.textContent = '大多数2FA应用使用默认设置：TOTP、6位、30秒、SHA1算法';
           break;
       }
     }
@@ -245,5 +384,227 @@ export function getUICode() {
         closeActionMenu();
       }
     });
+
+    // ========== FAB 拖拽：右下角"+"按钮可拖动并记住位置 ==========
+    const FAB_POSITION_STORAGE_KEY = '2fa-fab-position';
+    let fabDragJustHappened = false;
+
+    function loadFABPosition() {
+      try {
+        const raw = localStorage.getItem(FAB_POSITION_STORAGE_KEY);
+        if (!raw) return null;
+        const pos = JSON.parse(raw);
+        if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) return pos;
+      } catch (e) {}
+      return null;
+    }
+
+    function saveFABPosition(x, y) {
+      try {
+        localStorage.setItem(FAB_POSITION_STORAGE_KEY, JSON.stringify({ x: x, y: y }));
+      } catch (e) {}
+    }
+
+    function clampFABPosition(x, y, w, h) {
+      const margin = 8;
+      const vw = window.innerWidth || document.documentElement.clientWidth;
+      const vh = window.innerHeight || document.documentElement.clientHeight;
+      const maxX = Math.max(margin, vw - w - margin);
+      const maxY = Math.max(margin, vh - h - margin);
+      const clampedX = Math.min(Math.max(x, margin), maxX);
+      const clampedY = Math.min(Math.max(y, margin), maxY);
+      const headerControls = document.querySelector('.search-action-row');
+      if (headerControls) {
+        const controlsRect = headerControls.getBoundingClientRect();
+        const overlapsHeader =
+          clampedX < controlsRect.right + margin &&
+          clampedX + w > controlsRect.left - margin &&
+          clampedY < controlsRect.bottom + margin &&
+          clampedY + h > controlsRect.top - margin;
+        if (overlapsHeader) {
+          // Move only as far as needed to clear the controls; never reset to the bottom.
+          const candidates = [
+            { x: clampedX, y: controlsRect.bottom + margin },
+            { x: clampedX, y: controlsRect.top - h - margin },
+            { x: controlsRect.left - w - margin, y: clampedY },
+            { x: controlsRect.right + margin, y: clampedY }
+          ].filter(pos => pos.x >= margin && pos.x <= maxX && pos.y >= margin && pos.y <= maxY);
+          if (candidates.length) {
+            return candidates.reduce((nearest, pos) =>
+              Math.hypot(pos.x - clampedX, pos.y - clampedY) < Math.hypot(nearest.x - clampedX, nearest.y - clampedY)
+                ? pos : nearest
+            );
+          }
+        }
+      }
+      return {
+        x: clampedX,
+        y: clampedY
+      };
+    }
+
+    function applyFABPosition(x, y) {
+      const fab = document.querySelector('.action-menu-float');
+      if (!fab) return null;
+      const w = fab.offsetWidth || 48;
+      const h = fab.offsetHeight || 48;
+      const c = clampFABPosition(x, y, w, h);
+      fab.style.left = c.x + 'px';
+      fab.style.top = c.y + 'px';
+      fab.style.right = 'auto';
+      fab.style.bottom = 'auto';
+      return c;
+    }
+
+    // 根据 FAB 位置自适应子菜单展开方向（上/下、左/右）
+    function updateSubmenuDirection() {
+      const fab = document.querySelector('.action-menu-float');
+      const submenu = document.getElementById('actionSubmenu');
+      if (!fab || !submenu) return;
+      const fabRect = fab.getBoundingClientRect();
+      const submenuW = submenu.offsetWidth || 180;
+      const submenuH = submenu.offsetHeight || 350;
+      const gap = 12;
+
+      // 垂直方向：上方空间足够时向上展开（保持默认行为），否则向下
+      if (fabRect.top >= submenuH + gap) {
+        submenu.style.top = 'auto';
+        submenu.style.bottom = (fabRect.height + gap) + 'px';
+      } else {
+        submenu.style.bottom = 'auto';
+        submenu.style.top = (fabRect.height + gap) + 'px';
+      }
+
+      // 水平方向：默认右对齐；FAB 偏左导致溢出时改为左对齐
+      if (fabRect.right >= submenuW + 4) {
+        submenu.style.right = '0';
+        submenu.style.left = 'auto';
+      } else {
+        submenu.style.right = 'auto';
+        submenu.style.left = '0';
+      }
+    }
+
+    function initFABDrag() {
+      const fab = document.querySelector('.action-menu-float');
+      const btn = document.getElementById('mainActionBtn');
+      if (!fab || !btn) return;
+
+      // 移除预注入的 FOUC 防闪 style（用了 !important，会胜过下方的 inline style）
+      const initStyle = document.getElementById('fab-init-position');
+      if (initStyle && initStyle.parentNode) {
+        initStyle.parentNode.removeChild(initStyle);
+      }
+
+      // 还原上次保存的位置
+      const saved = loadFABPosition();
+      if (saved) {
+        const restored = applyFABPosition(saved.x, saved.y);
+        if (restored && (restored.x !== saved.x || restored.y !== saved.y)) {
+          saveFABPosition(restored.x, restored.y);
+        }
+      }
+
+      let dragging = false;
+      let moved = false;
+      let startPx = 0;
+      let startPy = 0;
+      let startFx = 0;
+      let startFy = 0;
+      const DRAG_THRESHOLD = 5;
+      let dragClickSuppressTimer = null;
+
+      function getPoint(e) {
+        if (e.touches && e.touches[0]) return e.touches[0];
+        if (e.changedTouches && e.changedTouches[0]) return e.changedTouches[0];
+        return e;
+      }
+
+      function onDown(e) {
+        if (e.button !== undefined && e.button !== 0) return;
+        const p = getPoint(e);
+        const rect = fab.getBoundingClientRect();
+        dragging = true;
+        moved = false;
+        startPx = p.clientX;
+        startPy = p.clientY;
+        startFx = rect.left;
+        startFy = rect.top;
+        fab.classList.add('dragging');
+      }
+
+      function onMove(e) {
+        if (!dragging) return;
+        const p = getPoint(e);
+        const dx = p.clientX - startPx;
+        const dy = p.clientY - startPy;
+        if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+        if (!moved) {
+          moved = true;
+          // 一旦判定为拖动，关闭已展开的菜单
+          const submenu = document.getElementById('actionSubmenu');
+          if (submenu && submenu.classList.contains('show')) {
+            closeActionMenu();
+          }
+        }
+        if (e.cancelable) e.preventDefault();
+        applyFABPosition(startFx + dx, startFy + dy);
+      }
+
+      function onUp(e) {
+        if (!dragging) return;
+        dragging = false;
+        fab.classList.remove('dragging');
+        if (moved) {
+          const rect = fab.getBoundingClientRect();
+          saveFABPosition(rect.left, rect.top);
+          // 触摸结束时阻止浏览器合成 click，避免拖完立刻弹菜单
+          if (e && e.cancelable && e.type && e.type.indexOf('touch') === 0) {
+            e.preventDefault();
+          }
+          // 对鼠标场景：通过下方 capture-phase click 守卫拦截即将到来的 click
+          fabDragJustHappened = true;
+          // 500ms 兜底超时，避免标志位被卡住
+          if (dragClickSuppressTimer) clearTimeout(dragClickSuppressTimer);
+          dragClickSuppressTimer = setTimeout(function() {
+            fabDragJustHappened = false;
+            dragClickSuppressTimer = null;
+          }, 500);
+        }
+      }
+
+      btn.addEventListener('mousedown', onDown);
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+
+      btn.addEventListener('touchstart', onDown, { passive: true });
+      document.addEventListener('touchmove', onMove, { passive: false });
+      document.addEventListener('touchend', onUp);
+      document.addEventListener('touchcancel', onUp);
+
+      // capture-phase 拦截拖拽结束后第一个 click，保证不会误触菜单
+      document.addEventListener('click', function(e) {
+        if (!fabDragJustHappened || !fab.contains(e.target)) {
+          return;
+        }
+        fabDragJustHappened = false;
+        if (dragClickSuppressTimer) {
+          clearTimeout(dragClickSuppressTimer);
+          dragClickSuppressTimer = null;
+        }
+        e.stopPropagation();
+        e.preventDefault();
+      }, true);
+
+      // 窗口尺寸变化时重新约束位置，并把约束后的坐标写回 storage，
+      // 保证下次进入显示的位置与上次可见状态一致
+      window.addEventListener('resize', function() {
+        if (fab.style.left || fab.style.top) {
+          const rect = fab.getBoundingClientRect();
+          const next = applyFABPosition(rect.left, rect.top);
+          if (next) saveFABPosition(next.x, next.y);
+        }
+      });
+    }
 `;
 }
